@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "critmin-net"
+version = "0.1.0"
+description = "The SEAR lab's critical-minerals network model: Alavi's six-stage network, calibrated on LLNL's regions."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Erick C. Jones Jr." }, { name = "Sara Alavi" }]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<4",
+    "gurobipy>=13.0,<15",     # 0.1.0 checked on 14.0.0; the pip wheel's size-limited licence imports but cannot solve it
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.4,<9", "ruff>=0.15,<0.16"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["solver: needs a full Gurobi licence (skipped without one)"]
+
+[tool.ruff]
+line-length = 130
+
+[tool.ruff.lint]
+# The ported model code keeps its dense one-line style (several statements per line, lambdas
+# bound to names, ambiguous loop names like l). Pyflakes (F) and the rest of E stay on.
+ignore = ["E401", "E701", "E702", "E731", "E741"]

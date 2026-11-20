@@ -1,0 +1,15 @@
+{
+  "notebook_objective": 29630.194425288813,
+  "port_objective": 29630.194425288828,
+  "agreement_rel": 4.911177773422596e-16,
+  "published_objective": 1195280.901110501,
+  "calibrated_objective": 1435567.3991038823,
+  "calibrated_us_cell_price": {
+    "GWh_nmc": 57.572817052104234,
+    "GWh_lfp": 56.474116429467514
+  },
+  "calibrated_us_cell_price_total": {
+    "GWh_nmc": 57.572817052104234,
+    "GWh_lfp": 56.474116429467514
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "status": 2,
+  "objective": 29630.194425288813,
+  "mip_gap": 0.0,
+  "runtime_s": 0.03400015830993652,
+  "n_vars": 8637,
+  "n_constrs": 7042,
+  "n_int": 2178,
+  "alpha": {
+    "US": 10,
+    "CHN": 0.01,
+    "AUS": 0.7
+  },
+  "import_coef": {
+    "US": 0.5,
+    "CHN": 1,
+    "AUS": 0.3
+  },
+  "region_share": {
+    "US": 0.2,
+    "CHN": 0.6,
+    "AUS": 0.1
+  },
+  "years": [
+    2026,
+    2036
+  ]
+}
