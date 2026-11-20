@@ -4,11 +4,16 @@ All network-optimization models for battery-mineral and lithium supply chains, p
 (Critical Mineral Lab) trade-exposure analysis. Replaces the earlier repos `mineralnet-optsc`,
 `lithiumsc-experiments` and `critmin-tradeexposure`, whose files now live here.
 
+**The lab's network model is [`models/critmin-net/`](models/critmin-net/).** It is the one
+maintained version; any network model elsewhere in the lab should derive from it (its README says
+how). The other folders are kept as they came.
+
 ## Layout
 
 | Folder | What it is | Source |
 |---|---|---|
-| `models/six-stage-mineralnet/` | Six-stage (mine → recycling) multi-region model, exploratory | `mineralnet-optsc` (main branch) |
+| `models/critmin-net/` | **The lab model.** Alavi's six-stage network as a tested Python package, with scenario hooks and a published-source calibration on LLNL's four regions. Reproduces her notebook to 1e-6. | `critmin-energy-surrogatecoupling` @ `5c3616a` |
+| `models/six-stage-mineralnet/` | Alavi's six-stage (mine → recycling) multi-region model as of 2026-10-06, exploratory: the original the lab model derives from. Her live repo is `mineralnet-optsc`. | `mineralnet-optsc` (main branch) |
 | `rff-trade-exposure/` | RFF Critical Mineral Lab: import exposure, FEOC, friendshoring | `critmin-tradeexposure` |
 | `archive/lithiumsc-experiments/` | Archived lithium formulation lineage (12 notebooks, 3 papers, data). Kept for reference, not maintained. | `lithiumsc-experiments` (archived) |
 | `game-theory/` | Not here. Bilevel and Benders formulations live in `sear-labs/lithium-gametheory`. | `lithium-bilevel` (renamed) |
@@ -23,4 +28,5 @@ the git history of the archived repos, so they MUST be rotated at the Gurobi por
 
 ## Status
 
-Exploratory. Each model is a notebook plus its data. Nothing is reproducible from a clean clone yet.
+`models/critmin-net/` runs and tests from a clean clone (Gurobi licence needed to solve). The rest
+is exploratory: each is a notebook plus its data, not yet reproducible from a clean clone.
