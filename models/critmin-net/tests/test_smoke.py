@@ -33,3 +33,21 @@ def test_calibration_shares_cover_llnls_regions():
     sh = N.shares_2024()
     assert set(sh[("demand", None)]) <= set(N.LLNL_REGIONS)
     assert sum(sh[("demand", None)].values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_a_named_data_folder_is_used(tmp_path):
+    """Local must win: $CRITMIN_NET_DATA, when set, is the folder read, not the shipped copy."""
+    from critmin_net import network as N
+    (tmp_path / "MANIFEST.sha256").write_text("")
+    assert N.data_dir({"CRITMIN_NET_DATA": str(tmp_path)}) == tmp_path.resolve()
+
+
+def test_a_named_data_folder_without_a_manifest_is_refused(tmp_path):
+    from critmin_net import network as N
+    with pytest.raises(FileNotFoundError):
+        N.data_dir({"CRITMIN_NET_DATA": str(tmp_path)})
+
+
+def test_unset_reads_the_shipped_copy():
+    from critmin_net import network as N
+    assert N.data_dir({}) == N.RAW and (N.RAW / "MANIFEST.sha256").is_file()

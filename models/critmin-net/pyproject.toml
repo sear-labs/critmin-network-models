@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "critmin-net"
-version = "0.1.0"
+version = "0.2.0"
 description = "The SEAR lab's critical-minerals network model: Alavi's six-stage network, calibrated on LLNL's regions."
 readme = "README.md"
 license = "MIT"
@@ -21,6 +21,10 @@ dev = ["pytest>=8.4,<9", "ruff>=0.15,<0.16"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The frozen inputs ship with the package: `pip install git+...` brings no data/ folder (standard, Part 6).
+critmin_net = ["data/*.md", "data/*.sha256", "data/**/*.csv", "data/**/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

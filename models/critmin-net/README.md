@@ -18,7 +18,7 @@ and policy and shock scenarios. One module: [`src/critmin_net/network.py`](src/c
   calibration on LLNL's four regions (US, US allies, China, rest of world) from published sources.
 - **The regional map is our calibration, not Alavi's or LLNL's.** LLNL's report supplies only the
   region taxonomy (LLNL-TR-859392). The shares, costs and tariffs come from USGS, IEA, Stanford GSB's
-  cost model and the US Section 301 fact sheet (`data/raw/calibration/`, one row per number with its
+  cost model and the US Section 301 fact sheet (`src/critmin_net/data/calibration/`, one row per number with its
   source); three assumptions (rest of world's costs, trade cost as a share of value, the price of unmet
   demand) are ours. Say so wherever the map appears.
 - **Preliminary.** Results from it are labelled so until the full models replace the testbed.
@@ -51,15 +51,25 @@ Gurobi is required: the pip wheel's size-limited licence imports the module but 
     pytest -q                  # everything; the solver checks skip without a full licence
     pytest -q -m solver        # only the checks that solve (under a minute)
 
-- `test_raw_frozen.py`: every input matches `data/raw/MANIFEST.sha256`.
+- `test_raw_frozen.py`: every input matches `src/critmin_net/data/MANIFEST.sha256`.
 - `test_smoke.py`: imports, and the inputs load and are sane. No solver.
 - `test_solver.py`: her notebook to 1e-6, and the baseline numbers to 1e-9.
 
 ## Data
 
-`data/raw/` is frozen; [`data/raw/SOURCES.md`](data/raw/SOURCES.md) says where each file came from.
+The inputs ship inside the package, in `src/critmin_net/data/`, so `pip install` brings them and a
+project using the model needs no copy of its own. They are frozen; [`SOURCES.md`](src/critmin_net/data/SOURCES.md)
+says where each file came from. To run on other inputs (a student's variant, a refresh being tested), set
+`CRITMIN_NET_DATA` to a folder laid out the same way, with its own `MANIFEST.sha256`; the model then
+reads that folder or refuses to start, never the shipped copy in its place.
+
 Alavi's inputs are unpublished lab data, so this repository stays private. The calibration is from
 public sources.
+
+**Using it from another project** (pin a commit; the repository is private, so the machine or CI job
+needs read access to it):
+
+    pip install "critmin-net @ git+https://github.com/sear-labs/critmin-network-models.git@<commit>#subdirectory=models/critmin-net"
 
 ## Planned
 
@@ -71,4 +81,4 @@ public sources.
 ## Credit
 
 Alavi built the network (formulation and data). Cite LLNL-TR-859392 for the regions, and the sources
-in `data/raw/calibration/` for the calibration.
+in `src/critmin_net/data/calibration/` for the calibration.

@@ -1,7 +1,7 @@
 """The lab's critical-minerals network model: Alavi's six-stage network, ported, with hooks and a calibration.
 
 The formulation is hers (sear-labs/mineralnet-optsc, notebooks/full6stage-network.ipynb), read from
-her committed data, frozen in data/raw/mineralnet-optsc/. Run with her notebook's parameters and no hooks, the port must
+her committed data, frozen in critmin_net/data/mineralnet-optsc/. Run with her notebook's parameters and no hooks, the port must
 reproduce her objective; `check_agreement()` asserts that against
 scripts/reference_sara_network.py's run of her notebook.
 
@@ -19,7 +19,7 @@ Calibration (params from `calibrated()`, off unless asked for): her inputs cost 
 region and start every region with the same capacity, so the cheapest region runs every stage.
 `calibrated()` moves her model from her three regions (US, China, Australia) to LLNL's: US, US
 allies, China and rest of world (LLNL_REGIONS), and adds, from published sources
-(data/raw/calibration/; country rows grouped as LLNL groups them):
+(data/calibration/; country rows grouped as LLNL groups them):
   * region_share       her world demand split by 2024 EV battery demand by region
   * grid_demand        every region's grid storage, outside ERCOT (IEA), as cell demand
   * alpha_stage        cost multiplier by stage and region: the US and allies at the US/China ratio
@@ -46,6 +46,7 @@ allies, China and rest of world (LLNL_REGIONS), and adds, from published sources
 Policies and shocks that close or cut China's arcs act from tactics["from_year"] (2031 in config.yaml),
 so the other regions have the five-year lead to build; the network sees them coming.
 """
+import os
 from pathlib import Path
 
 import numpy as np
@@ -53,7 +54,23 @@ import pandas as pd
 import gurobipy as gp
 from gurobipy import GRB, quicksum
 
-RAW = Path(__file__).resolve().parents[2] / "data" / "raw"   # models/critmin-net/data/raw
+
+
+def data_dir(env=None):
+    """Where the inputs are. $CRITMIN_NET_DATA if set: a named location, so it is used or refused (no
+    MANIFEST.sha256 there), never silently replaced by the shipped copy. Otherwise the copy shipped in the
+    package (critmin_net/data/), which `pip install` brings along."""
+    env = os.environ if env is None else env
+    named = env.get("CRITMIN_NET_DATA")
+    if named:
+        p = Path(named).resolve()
+        if not (p / "MANIFEST.sha256").is_file():
+            raise FileNotFoundError(f"CRITMIN_NET_DATA={named}: no MANIFEST.sha256 there; not a critmin-net data folder")
+        return p
+    return Path(__file__).resolve().parent / "data"
+
+
+RAW = data_dir()
 
 DATA = RAW / "mineralnet-optsc" / "data" / "raw" / "input_data_3region"
 
@@ -502,7 +519,7 @@ def solve(params=None, env=None, want_duals=False, **kw):
 
 
 def calibrated(env=None, regions=None, row_priced_as=None, ramp=None):
-    """Her published track on LLNL's regions, calibrated from data/raw/calibration/ (module docstring).
+    """Her published track on LLNL's regions, calibrated from data/calibration/ (module docstring).
 
     Stage costs: China 1.0; the US and its allies at the Stanford GSB US/China ratio; the rest of
     the world priced as `row_priced_as` (default ROW_PRICED_AS): 'CHN', 'US', or 'MID' (halfway).
@@ -580,7 +597,7 @@ PIPE = {}
 
 def pipeline_shares():
     """IEA base-case shares by LLNL region, stage (and chemistry, for cathode) and year, from
-    data/raw/calibration/capacity_pipeline.csv. Returns {(stage, chemistry or None): {year: {region: share}}};
+    data/calibration/capacity_pipeline.csv. Returns {(stage, chemistry or None): {year: {region: share}}};
     Special and Trade Embargoed must hold under 1% of any stage."""
     d = pd.read_csv(CAL / "capacity_pipeline.csv")
     d = d[d.use == "yes"]
@@ -626,7 +643,7 @@ def ramp_rates(regions=None):
 
 def grid_demand(regions, ev_gwh):
     """Grid storage outside ERCOT: cells, GWh a year by chemistry, region and year, from
-    data/raw/calibration/grid_storage.csv. The world's storage is EV cell demand (`ev_gwh`, {year: GWh},
+    data/calibration/grid_storage.csv. The world's storage is EV cell demand (`ev_gwh`, {year: GWh},
     her curve) times storage's lithium demand over EVs' (IEA GCMO 2025 annex, stated policies), so
     it keeps IEA's proportion; it is split by region at the regions' shares of storage additions; the
     US's less ERCOT's share (ERCOT's own build is the energy model's). LFP at IEA's share of
@@ -651,7 +668,7 @@ def grid_demand(regions, ev_gwh):
 
 
 def shares_2024():
-    """2024 shares by LLNL region from data/raw/calibration/country_shares_2024.csv (one row per
+    """2024 shares by LLNL region from data/calibration/country_shares_2024.csv (one row per
     country, stage and source). Returns {(stage, chemistry or None): {region: share}}, lithium regions
     only; Special and Trade Embargoed must hold under 1% of any lithium stage."""
     d = pd.read_csv(CAL / "country_shares_2024.csv")
@@ -697,7 +714,7 @@ def us_cell_prices(periods, extra_cell_demand=None, total=False, **kw):
 
 
 def check_agreement(tol=1e-6):
-    """Port vs her notebook (data/raw/reference/sara_network_meta.json): same objective."""
+    """Port vs her notebook (data/reference/sara_network_meta.json): same objective."""
     import json
     ref = json.loads((RAW / "reference" / "sara_network_meta.json").read_text())
     got = solve(NOTEBOOK)["obj"]

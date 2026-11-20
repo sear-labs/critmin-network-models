@@ -14,11 +14,11 @@ The portable standard governs this folder. Read it before working here, and agai
   to 1e-9, which move only on purpose, with the file regenerated and the reason in the commit and
   CHANGELOG.
 - **New features are off by default** and leave the baseline unchanged while off.
-- **Sensitivity: private.** `data/raw/mineralnet-optsc/` and `data/raw/reference/` are Alavi's
+- **Sensitivity: private.** `src/critmin_net/data/mineralnet-optsc/` and `src/critmin_net/data/reference/` are Alavi's
   unpublished data. Making this public needs them cleared or removed first, and the decision is Jones's.
 - **Writers: one machine at a time** for anything that regenerates `tests/baseline/` (Gurobi and BLAS
   versions can move the last digits).
 - **Credit Alavi** for the network wherever it appears, and say the regional map is our calibration,
   not hers or LLNL's.
-- `data/raw/` is frozen (`test_raw_frozen.py`); refresh an input only on purpose, via
-  `scripts/freeze_raw.py`, saying why in the commit and in `data/raw/SOURCES.md`.
+- `src/critmin_net/data/` is frozen (`test_raw_frozen.py`); refresh an input only on purpose, via
+  `scripts/freeze_raw.py`, saying why in the commit and in `src/critmin_net/data/SOURCES.md`.
