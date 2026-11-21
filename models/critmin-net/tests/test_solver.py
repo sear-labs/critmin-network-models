@@ -4,7 +4,7 @@
 
 Two guarantees, one each way:
   * the lab model still IS Alavi's model: run with her notebook's parameters and no hooks, it reproduces
-    her notebook's objective (data/raw/reference/, made by scripts/reference_sara_network.py) to 1e-6;
+    her notebook's objective (src/critmin_net/data/reference/, made by scripts/reference_sara_network.py) to 1e-6;
   * the move here changed nothing: the numbers in tests/baseline/working_repo_5c3616a.json, made by
     the same model in critmin-energy-surrogatecoupling at 5c3616a, come back to 1e-9.
 A change to the model that moves the second on purpose regenerates that file and says why in the commit

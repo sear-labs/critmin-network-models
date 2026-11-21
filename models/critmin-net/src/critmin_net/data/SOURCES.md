@@ -1,4 +1,4 @@
-# data/raw: where every frozen input came from
+# critmin_net/data: where every frozen input came from
 
 Everything here is an input from outside this folder, copied once and never written by any stage.
 `MANIFEST.sha256` lists every file's checksum and `tests/test_raw_frozen.py` fails if a file changes,
@@ -6,7 +6,7 @@ disappears or appears unlisted. To refresh an input on purpose: copy the new ver
 manifest (`python scripts/freeze_raw.py`), and say why in the commit.
 
 All three folders were copied on 2026-11-20 from critmin-energy-surrogatecoupling's `data/raw/` at
-`5c3616a`, byte for byte (the same checksums), where they were frozen on the dates below.
+`5c3616a` (here they sat in `data/raw/` until 0.2.0, which moved them into the package so they install with it), byte for byte (the same checksums), where they were frozen on the dates below.
 
 | Folder | Source, commit | Files | Whose |
 |---|---|---|---|

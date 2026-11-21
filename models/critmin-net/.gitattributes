@@ -1,2 +1,2 @@
 # Frozen inputs are checksummed byte for byte (tests/test_raw_frozen.py): never convert line endings.
-data/raw/** -text
+src/critmin_net/data/** -text

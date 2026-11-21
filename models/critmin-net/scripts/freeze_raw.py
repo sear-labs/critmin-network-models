@@ -1,11 +1,11 @@
-"""Write data/raw/MANIFEST.sha256: one line per frozen input, sorted, paths relative to data/raw.
+"""Write src/critmin_net/data/MANIFEST.sha256: one line per frozen input, sorted, paths relative to the data folder.
 
-Run only when an input is changed on purpose (see data/raw/SOURCES.md), then commit both.
+Run only when an input is changed on purpose (see src/critmin_net/data/SOURCES.md), then commit both.
 """
 import hashlib
 from pathlib import Path
 
-RAW = Path(__file__).resolve().parents[1] / "data" / "raw"
+RAW = Path(__file__).resolve().parents[1] / "src" / "critmin_net" / "data"
 SKIP = {"MANIFEST.sha256", "SOURCES.md"}
 
 

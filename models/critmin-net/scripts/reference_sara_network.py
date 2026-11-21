@@ -8,7 +8,7 @@ display calls. The model code itself is untouched.
     python scripts/reference_sara_network.py <path to a mineralnet-optsc clone>
         # -> data/interim/reference/sara_network_*.csv
 
-This is how data/raw/reference/ was made (at the commit named in data/raw/SOURCES.md).
+This is how src/critmin_net/data/reference/ was made (at the commit named in src/critmin_net/data/SOURCES.md).
 """
 import json, re, sys
 from pathlib import Path
