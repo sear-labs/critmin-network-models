@@ -3,6 +3,14 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.3.0 (2026-11-21)
+
+- The stockpile hook (`build(stockpile=...)`, options and defaults in `STOCKPILE`): stock carried between
+  years by stage, good and region, at a holding cost, with no drawdown in the last year and an end at least
+  at the start. Off by default, and off it adds no variables or constraints: the baseline numbers are
+  unchanged. The holding cost (10% of value a year) is a placeholder with no source yet.
+- Results gain `stock` and `hold_cost`. The pack balance's local `sp` is renamed `spk`; no behaviour change.
+
 ## 0.2.0 (2026-11-20)
 
 - The frozen inputs move from `data/raw/` into the package (`src/critmin_net/data/`), so `pip install

@@ -51,3 +51,25 @@ def test_a_named_data_folder_without_a_manifest_is_refused(tmp_path):
 def test_unset_reads_the_shipped_copy():
     from critmin_net import network as N
     assert N.data_dir({}) == N.RAW and (N.RAW / "MANIFEST.sha256").is_file()
+
+
+@pytest.mark.parametrize("bad", [{"stages": ["rec"]}, {"regions": ["MARS"]}, {"hold": 0.1}])
+def test_stockpile_options_are_checked(bad):
+    """A misspelt or impossible stockpile option is refused, not ignored. Building needs no licence to solve."""
+    gp = pytest.importorskip("gurobipy")
+    from critmin_net import network as N
+    m = gp.Model(); m.Params.OutputFlag = 0
+    with pytest.raises(ValueError):
+        N.build(m, N.PUBLISHED, stockpile=bad)
+
+
+def test_stockpile_off_adds_nothing():
+    """Off (the default), the model is the one without the hook: same variables and constraints."""
+    gp = pytest.importorskip("gurobipy")
+    from critmin_net import network as N
+    sizes = []
+    for kw in ({}, {"stockpile": None}):
+        m = gp.Model(); m.Params.OutputFlag = 0
+        N.build(m, N.PUBLISHED, **kw); m.update()
+        sizes.append((m.NumVars, m.NumConstrs))
+    assert sizes[0] == sizes[1]

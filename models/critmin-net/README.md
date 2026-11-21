@@ -14,7 +14,7 @@ and policy and shock scenarios. One module: [`src/critmin_net/network.py`](src/c
 - **The formulation is Alavi's** (sear-labs/mineralnet-optsc, `notebooks/full6stage-network.ipynb`),
   ported to a module and checked against her notebook to 1e-6 (`check_agreement()`).
 - **Added since:** the scenario hooks (storage demand bought by an energy model, tariffs, quotas,
-  embargoes, friendshoring, yields, output limits, a stylised cobalt add-on), and `calibrated()`, a
+  embargoes, friendshoring, yields, output limits, a stylised cobalt add-on, a stockpile), and `calibrated()`, a
   calibration on LLNL's four regions (US, US allies, China, rest of world) from published sources.
 - **The regional map is our calibration, not Alavi's or LLNL's.** LLNL's report supplies only the
   region taxonomy (LLNL-TR-859392). The shares, costs and tariffs come from USGS, IEA, Stanford GSB's
@@ -52,8 +52,9 @@ Gurobi is required: the pip wheel's size-limited licence imports the module but 
     pytest -q -m solver        # only the checks that solve (under a minute)
 
 - `test_raw_frozen.py`: every input matches `src/critmin_net/data/MANIFEST.sha256`.
-- `test_smoke.py`: imports, and the inputs load and are sane. No solver.
-- `test_solver.py`: her notebook to 1e-6, and the baseline numbers to 1e-9.
+- `test_smoke.py`: imports, the inputs load and are sane, and bad stockpile options are refused. No solver.
+- `test_solver.py`: her notebook to 1e-6, the baseline numbers to 1e-9, and the stockpile's properties
+  (it never raises the cost, bridges a cut it sees coming, and keeps its end condition).
 
 ## Data
 
@@ -71,10 +72,31 @@ needs read access to it):
 
     pip install "critmin-net @ git+https://github.com/sear-labs/critmin-network-models.git@<commit>#subdirectory=models/critmin-net"
 
+## The stockpile (0.3.0)
+
+`build(..., stockpile={})`, or `solve(params, stockpile={...})`: stock of a good carried from year to year
+in a region, built up and drawn down as the model chooses, at a holding cost a year. Ours, not Alavi's.
+Off unless asked for, and off it adds nothing to the model. The options and their defaults are `STOCKPILE`:
+
+| Option | Default | |
+|---|---|---|
+| `regions` | `['US']` | who holds stock: a US strategic reserve; `'all'` for inventory in any region |
+| `stages` | every stage but recycling | whose outputs can be stocked |
+| `hold_share` | `0.10` | **placeholder, no source yet**: holding cost a year, as a share of the good's value (China's embedded cost, as the trade cost uses) |
+| `initial` | none | stock at the start, by (stage, good, region) |
+| `max` | none | ceiling on a stage's stock in a region, every good summed |
+| `end_at_least_start` | on | no stock drawn in the last year, and each good ends at least where it started |
+
+The end condition matters: without it the model empties the stockpile in the horizon's last year for
+free, and builds stock to stand in for capacity that year lacks only because it serves one year (the
+same reason unmet demand is not allowed there). With it, the calibrated model holds essentially no stock
+in the base case, and under China's refining cut to 70% from 2031 the US reserve builds stock of refined
+lithium in 2030-2031 and draws it down over 2032-2034 (PRELIMINARY; the placeholder holding cost). Results report `stock`
+and `hold_cost`. Drawn stock is not production, so under rules of origin (`no_transship`) a reserve serves
+the region that holds it and is not re-exported.
+
 ## Planned
 
-- A stockpile: stock carried between years at each stage and region, with a holding cost, built up
-  and drawn down as the model chooses. Off by default, with the results unchanged while off.
 - Minerals beyond lithium's battery chain, rare earths first: mineral as a dimension of the network,
   as LLNL's taxonomy covers many minerals.
 
