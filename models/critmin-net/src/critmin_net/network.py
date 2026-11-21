@@ -14,6 +14,9 @@ Hooks (all off by default):
   * limits             output ceiling per (stage, region) and year, e.g. China's refining cut to a
                        share of its business-as-usual output (the refining shock)
   * cobalt             a Co add-on: NMC cathode needs refined Co, mined in DRC (stylized)
+  * stockpile          stock carried between years, by stage, good and region, built up and drawn down as
+                       the model chooses, at a holding cost; none is drawn in the last year, and it ends
+                       with at least what it started with. Ours, not Alavi's (STOCKPILE: options, defaults)
 
 Calibration (params from `calibrated()`, off unless asked for): her inputs cost the same in every
 region and start every region with the same capacity, so the cheapest region runs every stage.
@@ -142,6 +145,24 @@ SHORTAGE_MULT_REGION = {'US': 10.0}               # Jones, 2026-10-30: losing US
                                                   # costliest region to supply (30-45% of the unmet cells)
 SHIP_VALUE_SHARE = 0.02                           # assumption: trade costs 2% of the goods' value
 
+# The stockpile hook (build(stockpile=...)): defaults, each overridable per call. Ours; her model holds no stock.
+# Stock of a good is carried from year to year in a region; what is drawn down supplies that year's balance
+# like production, and what is built up leaves it like demand. It is not production, so under rules of origin
+# (no_transship) stock is not re-exported: a reserve serves the region that holds it.
+STOCKPILE = dict(
+    regions=['US'],                               # who holds stock: a US strategic reserve; 'all' for any region
+    stages=['mine', 'proc', 'cath', 'cell', 'pack'],   # whose outputs can be stocked (every stage but recycling)
+    hold_share=0.10,                              # PLACEHOLDER, no source yet: holding cost a year, as a share of
+                                                  # the good's value (China's embedded cost, the trade-cost basis)
+    initial={},                                   # {(stage, good, region): stock at the start}; none by default
+    max={},                                       # {(stage, region): ceiling on that stage's stock, every good
+                                                  # summed, each year}; none by default
+    end_at_least_start=True)                      # no stock drawn in the horizon's last year, and each good ends at
+                                                  # least where it started. Otherwise the end reads as a free
+                                                  # drawdown, and stock stands in for capacity the last year lacks
+                                                  # only because it serves one year (as unmet demand is not allowed
+                                                  # there either)
+
 
 def by_year(v, y):
     return v[y] if isinstance(v, dict) else v
@@ -183,11 +204,12 @@ def data(regions=None):
 
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
-          ev_scale=1.0, fix_int=None, limits=None):
+          ev_scale=1.0, fix_int=None, limits=None, stockpile=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
     fix_int: integer solution from a previous solve; fixes the integers so the LP gives duals.
+    stockpile: None (off), or a dict overriding STOCKPILE's defaults ({} for the defaults as they are).
     """
     p = params or NOTEBOOK
     alpha, import_coef, region_share = p["alpha"], p["import_coef"], p["region_share"]
@@ -264,7 +286,24 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         for key, v in act.items(): v.lb = v.ub = fix_int["act"][key]
     cons = {s: {(a, b, r, y): m.addVar() for a in IN_T[s] for b in OUT_T[s] for r in R for y in Y}
             for s in STAGES[1:]}
+    sp = None if stockpile is None else {**STOCKPILE, **stockpile}
+    stock = {}                                     # (stage, good, region, year): stock held at the year's end
+    if sp is not None:
+        if set(sp) != set(STOCKPILE):
+            raise ValueError(f"stockpile: unknown options {sorted(set(sp) - set(STOCKPILE))}")
+        if not set(sp["stages"]) <= set(STAGES) - {'rec'}:
+            raise ValueError(f"stockpile: stages must be among {STOCKPILE['stages']} (recycling output is not stocked)")
+        sp_r = R if sp["regions"] == 'all' else list(sp["regions"])
+        if not set(sp_r) <= set(R):
+            raise ValueError(f"stockpile: regions {sorted(set(sp_r) - set(R))} are not in the model ({R})")
+        stock = {(st, g, r, y): m.addVar() for st in sp["stages"] for g in OUT_T[st] for r in sp_r for y in Y}
     m.update()
+
+    def draw(st, g, r, y):                         # stock drawn down in year y (negative when built up)
+        if (st, g, r, y) not in stock:
+            return 0.0
+        prev = stock[st, g, r, y - 1] if y > min(Y) else sp["initial"].get((st, g, r), 0.0)
+        return prev - stock[st, g, r, y]
 
     def fin(s, n, y):
         return quicksum(flow[s][k, y] for k in t_in[s][n])
@@ -276,7 +315,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         for r in R:
             for y in Y:
                 n = ('mine', tm, r)
-                m.addConstr(prod[n, y] + fin('mine', n, y) == fout('mine', n, y)
+                m.addConstr(prod[n, y] + fin('mine', n, y) + draw('mine', tm, r, y) == fout('mine', n, y)
                             + quicksum(cons['proc'][tm, tp, r, y] for tp in PROC_T))
     nxt = {'proc': 'cath', 'cath': 'cell', 'cell': 'pack'}
     cell_bal, short_cap = {}, {}
@@ -290,7 +329,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             for r in R:
                 for y in Y:
                     lhs = (quicksum(prod[(s, ti, to, r), y] for ti in IN_T[s])
-                           + quicksum(flow[s][k, y] for ti in IN_T[s] for k in t_in[s][(s, ti, to, r)]))
+                           + quicksum(flow[s][k, y] for ti in IN_T[s] for k in t_in[s][(s, ti, to, r)])
+                           + draw(s, to, r, y))
                     rhs = (quicksum(flow[s][k, y] for ti in IN_T[s] for k in t_out[s][(s, ti, to, r)])
                            + quicksum(cons[nxt[s]][to, tn, r, y] for tn in OUT_T[nxt[s]]))
                     if s == 'cell':
@@ -304,11 +344,11 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     for to in PACK_T:
         for r in R:
             for y in Y:
-                sp = 0.0
+                spk = 0.0
                 if (to, r, y) in short:                    # packs demanded but not supplied: unmet, at a penalty
-                    sp = short[to, r, y]
-                    m.addConstr(sp <= demand_pack[(to, r, y)])
-                m.addConstr(quicksum(prod[('pack', ti, to, r), y] for ti in CELL_T) + sp
+                    spk = short[to, r, y]
+                    m.addConstr(spk <= demand_pack[(to, r, y)])
+                m.addConstr(quicksum(prod[('pack', ti, to, r), y] for ti in CELL_T) + spk + draw('pack', to, r, y)
                             + quicksum(flow['pack'][k, y] for ti in CELL_T for k in t_in['pack'][('pack', ti, to, r)])
                             == quicksum(flow['pack'][k, y] for ti in CELL_T for k in t_out['pack'][('pack', ti, to, r)])
                             + demand_pack[(to, r, y)]
@@ -367,6 +407,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     for (s, r), by_y in limits.items():            # output ceiling on one stage in one region
         for y, lim in by_y.items():
             m.addConstr(quicksum(prod[n, y] for n in N[s] if n[-1] == r) <= lim)
+    if sp is not None:                             # the stockpile: no free drawdown at the end; optional ceilings
+        if sp["end_at_least_start"]:
+            for (st, g, r, y), v in stock.items():
+                if y == max(Y):
+                    m.addConstr(v >= sp["initial"].get((st, g, r), 0.0))
+                    if y > min(Y): m.addConstr(v >= stock[st, g, r, y - 1])
+        for (st, r), cap_s in sp["max"].items():
+            for y in Y:
+                m.addConstr(quicksum(stock[st, g, r, y] for g in OUT_T[st] if (st, g, r, y) in stock) <= cap_s)
 
     # ---- LLNL-TR-859392 levers on CHN -> US arcs
     # Targets: the US alone, or the US and its allies (ALLY; AUS in her three regions). LLNL-TR-859392
@@ -465,9 +514,12 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     short_by_r = p.get("shortage_mult_region", {})
     short_cost = quicksum(short_by_r.get(r, short_mult) * embedded('cell' if to in CELL_T else 'pack', to, y) * v
                           for (to, r, y), v in short.items())
-    obj = quicksum(region_cost.values()) + co_cost + short_cost
+    hold_cost = (quicksum(sp["hold_share"] * embedded(st, g, y) * v for (st, g, r, y), v in stock.items())
+                 if stock else 0)
+    obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
-             ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over)
+             ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
+             hold_cost=hold_cost)
     return obj, h
 
 
@@ -487,6 +539,9 @@ def results(h, obj_val, want_duals=False):
     out["cell_share"] = {r: v / tot for r, v in cell_by_r.items()}
     out["short"] = {k: v.X * SHORT_GWH[k[0]] for k, v in h["short"].items() if v.X > 1e-6}   # unmet, cell GWh
     out["beyond"] = {k: e.getValue() - c for k, (e, c) in h["over"].items() if e.getValue() - c > 1e-6}  # past IEA's path
+    out["stock"] = {k: v.X for k, v in h.get("stock", {}).items() if v.X > 1e-6}   # (stage, good, region, year): held
+    hc = h.get("hold_cost", 0)
+    out["hold_cost"] = hc.getValue() if hasattr(hc, "getValue") else 0.0
     out["stage_output"] = {}                       # (stage, region, year): output, every node summed
     for (n, y), v in prod.items():
         k = (n[0], n[-1], y); out["stage_output"][k] = out["stage_output"].get(k, 0.0) + v.X

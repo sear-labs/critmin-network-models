@@ -9,6 +9,9 @@ Two guarantees, one each way:
     the same model in critmin-energy-surrogatecoupling at 5c3616a, come back to 1e-9.
 A change to the model that moves the second on purpose regenerates that file and says why in the commit
 and CHANGELOG.md. Nothing may move the first.
+
+The stockpile checks (0.3.0) are properties, not stored numbers: it can only lower the cost, it bridges a
+refining cut it sees coming, and its accounting holds at the horizon's end.
 """
 import json
 from pathlib import Path
@@ -55,3 +58,47 @@ def test_calibrated_model_unchanged_by_the_move(N):
     for total, key in ((False, "calibrated_us_cell_price"), (True, "calibrated_us_cell_price_total")):
         price, _ = N.us_cell_price(params=cal, total=total)
         assert price == pytest.approx(BASE[key], rel=1e-9)
+
+
+GAP = 2e-4      # the network is a MILP solved to Gurobi's default 1e-4 gap: two solves compare to twice that
+
+
+@pytest.fixture(scope="module")
+def cut(N):
+    """China's refining cut to 70% of its business-as-usual output from 2031, as the shock experiments use."""
+    cal = N.calibrated()
+    base = N.solve(cal)
+    return cal, {('proc', 'CHN'): {y: 0.7 * base["stage_output"][('proc', 'CHN', y)] for y in base["Y"] if y >= 2031}}
+
+
+def test_stockpile_never_costs_more(N, cut):
+    cal, limits = cut
+    off = N.solve(cal, limits=limits)["obj"]
+    for opts in ({}, {"regions": "all"}):
+        assert N.solve(cal, limits=limits, stockpile=opts)["obj"] <= off * (1 + GAP)
+
+
+def test_stockpile_bridges_a_cut_it_sees_coming(N, cut):
+    """The US reserve is built before the cut (2031) and drawn after it."""
+    cal, limits = cut
+    st = N.solve(cal, limits=limits, stockpile={})["stock"]
+    assert all(k[2] == 'US' for k in st)
+    assert any(k[3] < 2031 for k in st), "nothing stocked ahead of the cut"
+    assert any(k[3] >= 2031 for k in st), "nothing carried into the cut"
+
+
+def test_stockpile_too_dear_to_hold_is_not_held(N, cut):
+    cal, limits = cut
+    r = N.solve(cal, limits=limits, stockpile={"hold_share": 100.0})
+    assert r["stock"] == {} and r["obj"] == pytest.approx(N.solve(cal, limits=limits)["obj"], rel=GAP)
+
+
+def test_stockpile_ends_where_it_started(N):
+    """A starting stock may be used along the way, but none in the last year, and the end holds at least the start."""
+    cal = N.calibrated()
+    key = ('proc', 'loh', 'US')
+    r = N.solve(cal, stockpile={"initial": {key: 50.0}})
+    last = max(r["Y"])
+    held = {y: r["stock"].get(key + (y,), 0.0) for y in r["Y"]}
+    assert held[last] >= 50.0 - 1e-6
+    assert held[last] >= held[last - 1] - 1e-6
