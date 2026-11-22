@@ -3,6 +3,22 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.5.0 (2026-11-22)
+
+- Lifecycle in the engine, all optional and none in lithium: lifetimes (`net["life"]`, `history`, `build(life=)`,
+  `retire_share()`), end-of-life goods, repurposing caps (`route_caps`), collection (`collect`), scrap from
+  losses (`scrap`), co-products with free disposal (`coproducts`, `dispose`), and stages kept from trade
+  (`no_trade`). `results`' handle adds `retire`.
+- Reserves: `build(reserves=)`, extraction to date within reserves growing up to resources (`reserves_available`).
+- Goods are valued at their cost made new: routes fed by waste count only where nothing else makes a good.
+- The battery network covers every lithium-ion end use (EVs, storage, electronics, other) with retirement by age,
+  repurposing (5%, low on purpose), and recycling of retired products and manufacturing scrap. Mines have their
+  whole output, within growing reserves; the minerals' other uses are demand where they leave the chain. New
+  frozen inputs in `data/battery_2023_2024/`: `battery_demand_by_use.csv`, `mineral_demand_by_use.csv`,
+  `refined_production.csv`, `reserves.csv` (with resources and the 2015 edition's reserves), `lifecycle.csv`;
+  `regions.csv` gains 11 names.
+- No change to the lithium model (12 cases, fingerprints identical; results and prices identical).
+
 ## 0.4.0 (2026-11-21)
 
 - The network is described as sets: `MINERALS` (lithium only for now), `GOODS` (with `MINERAL_OF`),

@@ -108,26 +108,40 @@ def test_stockpile_ends_where_it_started(N):
 @pytest.fixture(scope="module")
 def battery():
     from critmin_net import battery as B
-    return B, B.run(losses={})                   # no losses: every mineral taken in exactly demand x intensity
+    return B, B.run(losses={}, repurpose=0.0)    # no losses and no repurposed packs standing in for new cells:
+                                                 # every mineral taken in exactly demand x intensity
 
 
-def test_battery_network_supplies_2023_and_2024(battery):
-    """Five minerals, recipes with several inputs: the observed years are supplied from the observed capacities.
-    LFP's cathode takes battery-grade iron phosphate, made in the pCAM stage."""
-    B, r = battery
-    assert r["status"] == 2 and r["short"] == {}
+@pytest.fixture(scope="module")
+def battery_default():
+    from critmin_net import battery as B
+    return B, B.load(), B.run()                  # the published defaults: losses, lifetimes, repurposing, recovery
+
+
+def test_battery_network_supplies_2023_and_2024(battery, battery_default):
+    """Five minerals, every lithium-ion end use, recipes with several inputs, retirement and recycling: the observed
+    years are supplied from the observed capacities, with and without losses."""
+    for r in (battery[1], battery_default[2]):
+        assert r["status"] == 2 and r["short"] == {}
 
 
 def test_battery_recipes_take_what_demand_needs(battery):
-    """Every refined mineral, and anode graphite, is taken in exactly demand x intensity; refined is mined."""
+    """Without losses, every refined metal and anode graphite is taken by the battery chain in exactly demand x
+    intensity over every end use."""
     B, r = battery
     for m in B.MINERALS:
         for y in B.YEARS:
             assert r["used"][m, y] == pytest.approx(r["need"][m, y], rel=1e-6)
-            if m != 'graphite':                  # graphite: natural (mined) plus synthetic
-                assert r["mined"][m, y] == pytest.approx(r["need"][m, y], rel=1e-6)
-                assert r["refined"][m, y] == pytest.approx(r["need"][m, y], rel=1e-6)
-    assert all(r["mined"]['graphite', y] < r["need"]['graphite', y] for y in B.YEARS)
+
+
+def test_battery_supply_covers_batteries_and_other_uses(battery_default):
+    """Refined lithium, nickel and cobalt, primary plus recycled, cover the batteries and the metals' other uses."""
+    B, inp, r = battery_default
+    for m in ('Li', 'Ni', 'Co'):
+        for y in B.YEARS:
+            other = sum(v for (g, rg, yy), v in inp["other"].items() if g == ('refine', m) and yy == y)
+            assert other > 0
+            assert r["refined"][m, y] + r["recycled"].get((m, y), 0.0) >= r["used"][m, y] + other - 1e-6
 
 
 def test_battery_china_imports_ore_it_refines(battery):
@@ -139,16 +153,17 @@ def test_battery_china_imports_ore_it_refines(battery):
             assert into > 1.0, (m, y)
 
 
-
 def test_losses_scale_what_goes_in():
-    """A 10% loss at cells and 5% at refining: recipes take need / 0.9 and mines give refined / 0.95."""
+    """A 10% loss at cells and 5% at refining: recipes take need / 0.9 and lithium, nickel and cobalt mines give
+    primary refined / 0.95 (manganese's mines also serve its other uses)."""
     from critmin_net import battery as B
-    r = B.run(losses={'cell': 0.10, 'refine': 0.05})
+    r = B.run(losses={'cell': 0.10, 'refine': 0.05}, repurpose=0.0)
     assert r["status"] == 2 and r["short"] == {}
     for m in ('Li', 'Ni', 'Co', 'Mn'):
         for y in B.YEARS:
             assert r["used"][m, y] == pytest.approx(r["need"][m, y] / 0.9, rel=1e-6)
-            assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / 0.95, rel=1e-6)
+            if m != 'Mn':
+                assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / 0.95, rel=1e-6)
 
 
 def test_losses_raise_the_lithium_model_cost():
@@ -158,13 +173,45 @@ def test_losses_raise_the_lithium_model_cost():
     assert N.solve(p, losses={'cell': 0.05})["obj"] > N.solve(p)["obj"]
 
 
-def test_battery_default_losses_supply_both_years():
-    """With the published default losses the observed years are still supplied, and each mine gives what its
-    refinery takes divided by the refinery's yield."""
-    from critmin_net import battery as B
-    r = B.run()
-    assert r["status"] == 2 and r["short"] == {}
+def test_battery_default_losses(battery_default):
+    """With the published default losses each lithium, nickel and cobalt mine gives what its refinery takes divided
+    by the refinery's yield, and the battery chain takes more than demand x intensity."""
+    B, inp, r = battery_default
     for m in ('Li', 'Ni', 'Co', 'Mn'):
         for y in B.YEARS:
-            assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / (1 - B.LOSSES[('refine', m, m)]), rel=1e-6)
+            if m != 'Mn':
+                assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / (1 - B.LOSSES[('refine', m, m)]), rel=1e-6)
             assert r["used"][m, y] > r["need"][m, y]
+
+
+def test_battery_scrap_and_retirements_are_recycled(battery_default):
+    """Manufacturing scrap (the cell loss) and retired products are shredded and recycled into refined metals; with
+    long EV lifetimes few EV packs retire yet, so scrap and electronics dominate the feed."""
+    B, inp, r = battery_default
+    for y in B.YEARS:
+        ev = sum(v for (g, yy), v in r["retired"].items() if yy == y and g.startswith('ev_'))
+        el = sum(v for (g, yy), v in r["retired"].items() if yy == y and g.startswith('electronics_'))
+        assert r["shredded"]['scrap', y] > el > ev > 0
+        assert all(r["recycled"][m, y] > 0 for m in B.METALS)
+
+
+def test_battery_shorter_ev_life_means_more_retired_and_recycled(battery_default):
+    """An 8-year EV battery life (the older assumption) retires far more EV packs in 2023-2024 than the published
+    longer lifetimes, repurposes more and recycles more lithium."""
+    B, inp, r0 = battery_default
+    short = {'mean': 8.0, 'shape': 3.0}
+    r1 = B.run(inp, life={'ev': short, ('ev', 'lfp'): short})
+    for y in B.YEARS:
+        ev = [sum(v for (g, yy), v in r["retired"].items() if yy == y and g.startswith('ev_')) for r in (r0, r1)]
+        assert ev[1] > 20 * ev[0]
+        assert sum(v for (g, yy), v in r1["repurposed"].items() if yy == y) > sum(
+            v for (g, yy), v in r0["repurposed"].items() if yy == y)
+        assert r1["recycled"]['Li', y] > r0["recycled"]['Li', y]
+
+
+def test_battery_repurposing_within_its_share(battery_default):
+    """At most the repurposing share of retired EV packs is repurposed, by chemistry, region and year."""
+    B, inp, r = battery_default
+    for y in B.YEARS:
+        for c in B.CHEMS:
+            assert r["repurposed"].get((f"ev_{c}", y), 0.0) <= B.LIFECYCLE["repurpose"] * r["retired"][f"ev_{c}", y] + 1e-6

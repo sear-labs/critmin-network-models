@@ -106,8 +106,11 @@ def test_battery_inputs_load_and_hang_together():
     pytest.importorskip("gurobipy")
     from critmin_net import battery as B, network as N
     inp = B.load()
-    for y, world in ((2023, 750.0), (2024, 950.0)):
-        assert sum(v for (c, r, yy), v in inp["demand"].items() if yy == y) == pytest.approx(world)
+    for y, world in ((2023, 770.0 + 90 + 50 + 80), (2024, 950.0 + 160 + 60 + 90)):   # EV, storage, electronics, other
+        assert sum(v for (u, c, r, yy), v in inp["demand"].items() if yy == y) == pytest.approx(world)
+    assert min(y for (u, c, r, y) in inp["history"]) == 2015 and max(y for (u, c, r, y) in inp["history"]) == 2022
+    assert all(s["reserve"] >= 0 and s["growth"] > 0 for s in inp["reserves"].values())
+    assert inp["reserves"][('Li', 'CHN')]["resources"] >= inp["reserves"][('Li', 'CHN')]["reserve"]
     tot = {}
     for (s, key, r, y), v in inp["share"].items():
         tot[s, key, y] = tot.get((s, key, y), 0.0) + v

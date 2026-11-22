@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "critmin-net"
-version = "0.4.0"
+version = "0.5.0"
 description = "The SEAR lab's critical-minerals network model: Alavi's six-stage network, calibrated on LLNL's regions."
 readme = "README.md"
 license = "MIT"

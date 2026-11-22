@@ -25,7 +25,7 @@ and policy and shock scenarios. One module: [`src/critmin_net/network.py`](src/c
 
 Every hook is off by default. With none on and her notebook's parameters, it is her model.
 
-## How the network is described (0.4.0)
+## How the network is described (0.4.0, 0.5.0)
 
 As sets, at the top of `network.py`, from which `build()` makes every balance, trade arc and input variable:
 
@@ -51,18 +51,39 @@ loses 60% in spheronisation; pCAM and cathode none (GREET's assumption, nothing 
 2023 (IEA). Most are single projects or model assumptions. Mining recovery stays the `yields` hook, since mine capacity
 is already contained output. Manufacturing scrap is lost for now; with recycling it will feed black mass.
 
-**The multi-mineral test network** (`critmin_net.battery`, PRELIMINARY): lithium, nickel, cobalt, manganese
-and graphite through mining, refining, pCAM, anode, cathode and cells, on LLNL's regions plus "Special" (the
-DRC), for 2023 and 2024. pCAM takes nickel, cobalt and manganese sulfates together; LFP's precursor, battery-grade
-iron phosphate, is a pCAM good with its own capacity and cost but no mined input (iron ore and phosphate rock are
-not modelled: batteries take little of either); cathode takes its precursor and lithium; cells take cathode and
-anode, at GREET's kg per kWh. By molar mass, GREET's 0.08 kg of lithium per kWh of LFP is about 1.7 kg of iron
-phosphate per kWh. The quantities are real and sourced
-(`src/critmin_net/data/battery_2023_2024/`): USGS mine output times each mineral's EV share (IEA), IEA refining,
-cathode and cell shares, and IEA's EV battery demand by region and chemistry; every cost is a placeholder. It
-tests the mechanism, not the world: `python -m critmin_net.battery` solves it, and the solver tests check that
-both years are supplied with nothing unmet, that every mineral is taken in exactly demand x intensity (with
-losses off), that losses scale what goes in, and that China, which refines most lithium and cobalt but mines little lithium and no cobalt, imports ore.
+**Lifecycle, reserves and co-products (0.5.0).** All optional parts of a network, none in lithium's:
+- *Lifetimes:* what a process places in an end use retires there over later years, by a lifetime distribution
+  (Weibull, by mean and shape or by shape, scale and location, or a table by age), into an end-of-life good;
+  `history` gives what was placed before the horizon. `build(life=)` changes a lifetime.
+- *Repurposing and recycling:* a process may take an end-of-life good (repurposing, capped at a share of what
+  retires by `route_caps`; shredding); `collect` is the share of what retires that must be taken. A stage's
+  losses can become scrap (`scrap`). End uses, retired products and scrap can be kept from trade (`no_trade`).
+- *Co-products:* a process may make other goods in fixed ratios to its output (`coproducts`): metals out of black
+  mass, and in time the oxides out of a mixed rare-earth concentrate or cobalt out of copper and nickel ores. A
+  good with co-product supply may leave surplus unused (stored with the stockpile, or discarded), as may any good
+  in `dispose`.
+- *Reserves:* extraction to date within reserves that grow (discoveries, reclassification) up to identified
+  resources, also growing (`reserves`, `reserves_available`).
+- Goods are valued (for trade costs and unmet demand) at their cost made new: routes fed by waste, which is
+  valued at nothing, count only where a good has no other route.
+
+Every stage is pulled only by the stage after it; final demand may sit on any good.
+
+**The battery test network** (`critmin_net.battery`, PRELIMINARY): lithium, nickel, cobalt, manganese and
+graphite through mining, refining, precursor (pCAM; battery-grade iron phosphate for LFP, with no mined input),
+anode, cathode and cells into every lithium-ion end use (EVs, stationary storage, portable electronics, other),
+on LLNL's regions plus "Special" (the DRC), for 2023 and 2024. What is placed retires by age; up to a share of
+retired EV packs is repurposed as storage (5% by default, low on purpose); everything else retired, and the cells'
+manufacturing scrap, is shredded where it is, into black mass that can be traded and is recycled
+(hydrometallurgy) into refined metals. Mines have their whole USGS output, within reserves growing at their
+2015-2025 rate to resources; the minerals' other uses are demand where they leave the battery chain (refined
+lithium, nickel and cobalt; mined manganese and natural graphite). The quantities are sourced
+(`src/critmin_net/data/battery_2023_2024/`, one row per number); losses (`LOSSES`) and lifecycle (`LIFECYCLE`)
+defaults are chosen from published tables there, and every cost is a placeholder. `python -m critmin_net.battery`
+solves it; `run(life=..., repurpose=..., collect=..., losses=...)` changes a default for one run. With the
+published EV lifetimes (Xu et al. 2020: most packs last 15-20 years) almost no EV packs retire in 2023-2024, so
+manufacturing scrap and electronics are most of the recycling feed; an 8-year life, the older assumption,
+retires 100 to 200 times more.
 
 0.4.0 changed only how the model is written: across Alavi's parameters, the calibration and every hook, it
 builds the same Gurobi model as 0.3.0, by Gurobi's model fingerprint, and reports the same results and
@@ -140,14 +161,13 @@ the region that holds it and is not re-exported.
 
 ## Planned
 
-- The rest of the battery chain on the sets above: precursor (pCAM) from nickel, cobalt and manganese
-  sulfates; an anode (natural and synthetic graphite); nickel and manganese supply; cobalt as a byproduct of
-  copper and nickel mining, with the DRC as LLNL's "Special" region (no "Trade Embargoed" region: those
-  countries are not producers). Chemistry choice, at least as a scenario. One unit convention.
-- Recycling from retired packs by age, plus manufacturing scrap: every retired pack is shredded where it
-  retires, black mass can be traded, and hydromet returns lithium and Ni/Co/Mn products to precursor and
-  cathode. This replaces the fixed recycling demand.
-- Rare earths, as LLNL's taxonomy covers many minerals.
+- The lithium network on the battery network's structure: its fixed recycling demand replaced by retirement,
+  repurposing and recycling. Cobalt as a co-product of copper and nickel mining. Chemistry choice, at least as a
+  scenario. Recycling capacity by region.
+- More networks on the same engine: rare earths (separation as co-production; magnets, catalysts, electronics,
+  defence), and energy equipment: gas turbines, wind, solar, transformers (grain-oriented electrical steel), power
+  electronics (inverters and converters), data-centre components. Shared goods named alike, so networks can be
+  combined.
 
 ## Credit
 
