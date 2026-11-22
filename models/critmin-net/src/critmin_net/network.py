@@ -14,6 +14,12 @@ Hooks (all off by default):
   * losses             material lost in a process, as a share of what goes in, by stage, process or node
                        (process + region), optionally by year: output = (1 - loss) x recipe x input. A network
                        may carry its own defaults (net["losses"]); the argument overrides them key by key
+  * reserves           extraction to date within what is extractable, per mine node: a fixed total, or reserves
+                       that grow (discoveries and reclassification) up to identified resources, also growing
+                       (reserves_available)
+  * life               product lifetimes, over a network's own (net["life"]): what a process places in a region
+                       (an end use) retires there over the following years, by a lifetime distribution, into an
+                       end-of-life good that repurposing and recycling take (see LIFECYCLE)
   * limits             output ceiling per (stage, region) and year, e.g. China's refining cut to a
                        share of its business-as-usual output (the refining shock)
   * cobalt             a Co add-on: NMC cathode needs refined Co, mined in DRC (stylized)
@@ -52,6 +58,7 @@ allies, China and rest of world (LLNL_REGIONS), and adds, from published sources
 Policies and shocks that close or cut China's arcs act from tactics["from_year"] (2031 in config.yaml),
 so the other regions have the five-year lead to build; the network sees them coming.
 """
+import math
 import os
 from pathlib import Path
 
@@ -216,11 +223,75 @@ LITHIUM = dict(minerals=MINERALS, stages=STAGES, goods=GOODS, mineral_of=MINERAL
                short_gwh=SHORT_GWH)               # cell GWh per unit unmet, for reporting
 
 
+# Lifecycle, for a network that carries it (none of it is in LITHIUM):
+#   life        {process: (end-of-life good, spec)}: what the process makes in a region in a year is placed there
+#               (an end use) and retires over later years into the end-of-life good, by the spec: {"mean": years,
+#               "shape": k} or {"shape": k, "scale": years, "loc": years}, a Weibull distribution, or {age: share}
+#               directly. build(life=) changes the spec.
+#   history     {(process, region, year): units placed} before the horizon, so retirements start where they are
+#   collect     share of what retires that must be taken by repurposing or recycling (a number or {year: share});
+#               the rest stays in place. 1.0, the default: every retired unit is repurposed or recycled
+#   route_caps  {process: share}: a process taking an end-of-life good may take at most this share of what retires
+#               (repurposing)
+#   scrap       {stage: scrap stage}: what a stage loses (losses) becomes a scrap good of the same name there
+#   coproducts  {process: {good: units per unit of output}}: e.g. hydrometallurgy's other metals. A good with
+#               co-product supply may leave surplus unused, as may any good in `dispose`
+#   no_trade    stages whose goods are not traded (end uses; retired products, shredded where they retire)
+
+
+def reserves_available(spec, t):
+    """What can have been extracted by the end of year t of the horizon (t = 0 its first year).
+
+    A number: a fixed total. A dict: reserve x (1 + growth)^t, as reserves grow with discoveries and as resources are
+    reclassified, but never above resources x (1 + resource_growth)^t, identified resources being the larger
+    category that reserves are drawn from. "growth" and "resource_growth" default to 0, "resources" to no ceiling.
+    Reserve and resources are what remains at the horizon's start."""
+    if not isinstance(spec, dict):
+        return float(spec)
+    r = float(spec["reserve"]) * (1.0 + spec.get("growth", 0.0)) ** t
+    if "resources" in spec:
+        r = min(r, float(spec["resources"]) * (1.0 + spec.get("resource_growth", 0.0)) ** t)
+    return r
+
+
+def retire_share(spec, age):
+    """Share of what is placed that retires at this age (years after the year placed; none at age 0)."""
+    if age < 1:
+        return 0.0
+    if "scale" in spec:                            # Weibull by shape, scale and location (years before any retire)
+        k, lam, loc = float(spec["shape"]), float(spec["scale"]), float(spec.get("loc", 0.0))
+
+        def G(t):
+            return 1.0 - math.exp(-(((t - loc) / lam) ** k)) if t > loc else 0.0
+        return G(age) - G(age - 1)
+    if "mean" in spec:
+        k = float(spec["shape"])
+        lam = float(spec["mean"]) / math.gamma(1.0 + 1.0 / k)
+
+        def F(t):
+            return 1.0 - math.exp(-((t / lam) ** k)) if t > 0 else 0.0
+        return F(age) - F(age - 1)
+    if all(isinstance(a, int) for a in spec):
+        return float(spec.get(age, 0.0))
+    raise ValueError(f"life: a spec is {{'mean': years, 'shape': k}} or {{age: share}}, got {spec!r}")
+
+
 def check_net(net):
     """A network's sets describe one connected network (see _check_sets). Raises ValueError."""
     goods = set(net["goods"])
-    if {output(p) for p in net["processes"]} != goods:
-        raise ValueError("a good no process makes, or a process making no good")
+    unmade = {eol for eol, _ in net.get("life", {}).values()} | {g for g in goods if g[0] in net.get("scrap", {}).values()}
+    if {output(p) for p in net["processes"]} | unmade != goods:
+        raise ValueError("a good no process makes (and nothing retires or is scrapped into), or a process making no good")
+    for q, (eol, spec) in net.get("life", {}).items():
+        if q not in net["processes"] or eol not in goods:
+            raise ValueError(f"life: {q!r} is not a process or {eol!r} not a good")
+        retire_share(spec, 1)
+    for q, outs in net.get("coproducts", {}).items():
+        if q not in net["processes"] or not set(outs) <= goods:
+            raise ValueError(f"coproducts: {q!r} is not a process, or names a good that is not one")
+    for q in net.get("route_caps", {}):
+        if q not in net["processes"] or len(net["recipe"][q]) != 1:
+            raise ValueError(f"route_caps: {q!r} must be a process with one input")
     if not all(g in goods for p in net["processes"] for g in net["recipe"][p]):
         raise ValueError("a recipe input that is not a good")
     if set(net["mineral_of"].values()) - {None} != set(net["minerals"]):
@@ -289,7 +360,7 @@ def data(regions=None):
 
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
-          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None):
+          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None, reserves=None, life=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
@@ -298,6 +369,9 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     net: the network (LITHIUM by default): its sets, and its data if it carries any (see LITHIUM).
     losses: {stage | process | node: share lost, or {year: share}}, over the network's own (net["losses"]); the
       most specific key wins. Applies to processes with inputs; mining recovery is `yields`.
+    reserves: {mine node: a number (a fixed total), or {"reserve", "growth", "resources", "resource_growth"}},
+      over the network's own (net["reserves"]); see reserves_available.
+    life: {process: lifetime spec}, replacing the network's spec for that process (net["life"]; see LIFECYCLE).
     """
     p = params or NOTEBOOK
     nt = LITHIUM if net is None else net
@@ -323,6 +397,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     Y_start = [y for y in Y if y < min(Y) + 5]; Y_warm = [y for y in Y if y >= min(Y) + 5]
     tactics = tactics or {}; yields = yields or {}; limits = limits or {}
     LOSS = check_losses({**nt.get("losses", {}), **(losses or {})}, nt, R)
+    RES = {**nt.get("reserves", {}), **(reserves or {})}
+    LIFE = {q: (eol, (life or {}).get(q, spec)) for q, (eol, spec) in nt.get("life", {}).items()}
+    if set(life or {}) - set(LIFE):
+        raise ValueError(f"life: {sorted(set(life) - set(LIFE))} have no lifetime in the network")
+    COPROD = nt.get("coproducts", {})              # {process: {good: units per unit of the process's output}}
+    SCRAP = nt.get("scrap", {})                    # {stage: scrap stage}: what a stage loses becomes scrap there
+    NO_TRADE = set(nt.get("no_trade", ()))         # stages whose goods stay where they are made or retire
+    ROUTE_CAP = nt.get("route_caps", {})           # {process: share}: its input <= share x that good's retirement
+    COLLECT = nt.get("collect", 1.0)               # share of what retires that must be taken (repurposed or recycled)
 
     def loss(n, y):                                # share lost at node n in year y: node, then process, then stage
         for k in (n, n[:-1], n[0]):
@@ -369,7 +452,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
 
     N = {s: [p + (r,) for p in nt["processes"] if p[0] == s for r in R] for s in STG}   # nodes, by stage
     ALL = [n for s in STG for n in N[s]]
-    trade = {s: [p + (i, j) for p in nt["processes"] if p[0] == s for i in R for j in R if i != j] for s in STG}
+    trade = {s: ([] if s in NO_TRADE else [p + (i, j) for p in nt["processes"] if p[0] == s for i in R for j in R if i != j])
+             for s in STG}
     t_in = {s: {n: [] for n in N[s]} for s in STG}; t_out = {s: {n: [] for n in N[s]} for s in STG}
     for s in STG:
         for k, a in enumerate(trade[s]):           # an arc carries its node's output from region a[-2] to a[-1]
@@ -384,6 +468,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     flow = {s: {(k, y): m.addVar() for k in range(len(trade[s])) for y in Y} for s in STG}
     vt = GRB.CONTINUOUS if fix_int is not None else GRB.INTEGER
     prod = {(n, y): m.addVar() for n in ALL for y in Y}
+    prod_nodes = set(ALL)
     cap = {(n, y): m.addVar() for n in ALL for y in Y}
     newc = {(n, y): m.addVar() for n in ALL for y in Y}
     inv = {(n, y): m.addVar(vtype=vt) for n in ALL for y in Y}
@@ -423,6 +508,30 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     short_stage = {name: st for st in nt["short_stages"] if st in STG for name in OUTT[st]}
     short = ({(to, r, y): m.addVar() for to in short_stage for r in R for y in Y if y < max(Y)}
              if short_mult else {})
+    eol_of = {}                                    # end-of-life good: the processes whose output retires into it
+    for q, (eol, _) in LIFE.items():
+        eol_of.setdefault(eol, []).append(q)
+    hist = nt.get("history", {})                   # {(process, region, year placed): units}, before the horizon
+
+    def retiring(g, r, y):                         # what retires into end-of-life good g in region r in year y
+        tot = 0.0
+        for q in eol_of.get(g, []):
+            spec = LIFE[q][1]
+            tot += quicksum(retire_share(spec, y - v) * prod[q + (r,), v] for v in Y if v < y)
+            tot += sum(retire_share(spec, y - v) * u for (qq, rr, v), u in hist.items() if qq == q and rr == r and v < y)
+        return tot
+
+    scrap_from = {}                                # scrap good: the nodes whose losses become it
+    for s, sc in SCRAP.items():
+        for n in N[s]:
+            scrap_from.setdefault(((sc, output(n[:-1])[1]), n[-1]), []).append(n)
+    co_in = {}                                     # good: (node, units per unit output) of processes that co-produce it
+    for q, outs in COPROD.items():
+        for g, k in outs.items():
+            for r in R:
+                co_in.setdefault((g, r), []).append((q + (r,), k))
+    dispose = set(nt.get("dispose", ())) | {g for g, _ in co_in}    # goods whose surplus may go unused
+    retire = {}                                    # (eol good, region, year): expression, for route caps and results
     for g in GDS:                                # every good, region and year: made + imported + drawn from stock
         s, name = g                                # == exported + taken by recipes + final demand
         for r in R:
@@ -430,6 +539,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 supply = (quicksum(prod[n, y] for n in makers[g, r])
                           + quicksum(flow[s][k, y] for n in makers[g, r] for k in t_in[s][n])
                           + draw(s, name, r, y))
+                if g in eol_of:
+                    retire[g, r, y] = retiring(g, r, y)
+                    supply += retire[g, r, y]
+                for n in scrap_from.get((g, r), []):
+                    lo = loss(n, y)
+                    if lo:
+                        supply += lo / (1.0 - lo) * prod[n, y]   # lost, in units of the output it would have been
+                for n, k in co_in.get((g, r), []):
+                    supply += k * prod[n, y]
                 use = (quicksum(flow[s][k, y] for n in makers[g, r] for k in t_out[s][n])
                        + quicksum(cons[n, g, y] for n in users[g, r]))
                 demand = final_demand(g, r, y)
@@ -438,12 +556,28 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     supply += short[name, r, y]
                     c = m.addConstr(short[name, r, y] <= demand)
                     if s == 'cell': short_cap[name, r, y] = c
-                bal = m.addConstr(supply == use)
+                if g in eol_of:                    # what retires is taken, at least the collected share; the rest
+                    m.addConstr(use <= supply)     # stays in place (in use, stored or landfilled)
+                    bal = m.addConstr(use >= by_year(COLLECT, y) * supply)
+                elif g in dispose:                 # co-products and the like: surplus may go unused
+                    bal = m.addConstr(supply >= use)
+                else:
+                    bal = m.addConstr(supply == use)
                 if s == 'cell': cell_bal[name, r, y] = bal
     for n in ALL:                                  # each input in its recipe's proportion
         for g, out_per_in in RCP[n[:-1]].items():
             for y in Y:
                 m.addConstr(prod[n, y] == (1.0 - loss(n, y)) * out_per_in * cons[n, g, y])
+    for q, shr in ROUTE_CAP.items():               # e.g. repurposing: at most a share of what retires
+        (g,) = RCP[q]
+        for r in R:
+            for y in Y:
+                m.addConstr(cons[q + (r,), g, y] <= by_year(shr, y) * retire[g, r, y])
+    for n, spec in RES.items():                    # extraction to date within what is extractable by then
+        if n not in prod_nodes:
+            raise ValueError(f"reserves: {n!r} is not a node")
+        for y in Y:
+            m.addConstr(quicksum(prod[n, v] for v in Y if v <= y) <= reserves_available(spec, y - min(Y)))
     if alavi:                                      # Alavi's recycling: exactly her recycling demand, world-wide
         for tg in REC_T:
             for y in Y:
@@ -555,16 +689,29 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
 
     cv = {}
     made_by = {g: [q for q in nt["processes"] if output(q) == g] for g in GDS}
+    # Waste and what is made only from waste (retired products, scrap, black mass) is valued at nothing, so a route
+    # fed by it (repurposing, recycling) would make its good look nearly free. A good's value is what it costs made
+    # new: routes taking waste count only where a good has no other route.
+    waste = {g for g in GDS if not made_by[g]}
+    while True:
+        more = {g for g in GDS if g not in waste and made_by[g]
+                and all(RCP[q] and all(i in waste for i in RCP[q]) for q in made_by[g])}
+        if not more:
+            break
+        waste |= more
+    new_route = {g: ([q for q in made_by[g] if not any(i in waste for i in RCP[q])] or made_by[g]) for g in GDS}
 
     def embedded(s, b, y):                         # China's unit cost of good b, with everything inside it: the
         if (s, b, y) not in cv:                    # cheapest process's cost plus its inputs' values, per unit made
             pc = cost[s][0]
-            if s in nt["value_alone"]:             # recycled chemicals: the recycling stage only
+            if not made_by[s, b]:                  # end-of-life and scrap goods: waste, valued at nothing
+                cv[s, b, y] = 0.0
+            elif s in nt["value_alone"]:             # recycled chemicals: the recycling stage only
                 cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] for q in made_by[s, b])
             else:
                 cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / ((1.0 - loss(q + ('CHN',), y)) * k)
                                                                for g, k in RCP[q].items())
-                                  for q in made_by[s, b])
+                                  for q in new_route[s, b])
         return cv[s, b, y]
 
     def value(s, a, y):                            # the traded good's embedded value (at China's cost)
@@ -599,7 +746,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
-             hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS)
+             hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire)
     return obj, h
 
 
