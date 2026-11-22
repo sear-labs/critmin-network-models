@@ -116,3 +116,16 @@ def test_battery_inputs_load_and_hang_together():
     net, params, kw, need = B.network(inp)
     N.check_net(net)
     assert need[('Li', 2023)] > 0 and set(params["regions"]) == set(N.LLNL_REGIONS) | {'SPC'}
+
+
+
+def test_losses_are_checked():
+    """A loss names a stage, process or node with inputs, and is a share in [0, 1)."""
+    pytest.importorskip("gurobipy")
+    from critmin_net import network as N
+    nt, R = N.LITHIUM, N.LLNL_REGIONS
+    p = next(q for q in nt["processes"] if q[0] == 'cell')
+    N.check_losses({'cell': 0.1, p: {2030: 0.05}, p + ('US',): 0.0}, nt, R)
+    for bad in ({'mine': 0.1}, {'cell': 1.0}, {'cell': -0.1}, {('nope',): 0.1}, {p + ('Mars',): 0.1}):
+        with pytest.raises(ValueError):
+            N.check_losses(bad, nt, R)

@@ -40,15 +40,29 @@ As sets, at the top of `network.py`, from which `build()` makes every balance, t
 `build(..., net=...)` takes a network as data: its sets, and optionally its own years, costs and demand
 (`network.LITHIUM` documents the format). Lithium, the default, reads Alavi's tables as before.
 
+**Losses** (`build(..., losses=...)`): the share of what goes into a process that is lost, keyed by a stage
+(`'cell'`), a process or a node (process + region), as a number or `{year: share}`; the most specific key wins.
+A process then makes `(1 - loss) x recipe x input`, so a loss downstream raises everything upstream of it, and
+embedded values rise with it. A network may carry defaults (`net["losses"]`), which the argument overrides key
+by key. Off for lithium, whose ratios are Alavi's. The battery network's defaults (`battery.LOSSES`) are chosen
+from `data/battery_2023_2024/stage_losses.csv`, 62 published values with their sources and the gaps marked:
+refining 7.7% (lithium), 7.4% (nickel), 0.4% (cobalt, refinery step only), 13% (manganese); natural graphite
+loses 60% in spheronisation; pCAM and cathode none (GREET's assumption, nothing measured); cell scrap 10% in
+2023 (IEA). Most are single projects or model assumptions. Mining recovery stays the `yields` hook, since mine capacity
+is already contained output. Manufacturing scrap is lost for now; with recycling it will feed black mass.
+
 **The multi-mineral test network** (`critmin_net.battery`, PRELIMINARY): lithium, nickel, cobalt, manganese
 and graphite through mining, refining, pCAM, anode, cathode and cells, on LLNL's regions plus "Special" (the
-DRC), for 2023 and 2024. pCAM takes nickel, cobalt and manganese sulfates together; NMC cathode takes pCAM and
-lithium; cells take cathode and anode, at GREET's kg per kWh. The quantities are real and sourced
+DRC), for 2023 and 2024. pCAM takes nickel, cobalt and manganese sulfates together; LFP's precursor, battery-grade
+iron phosphate, is a pCAM good with its own capacity and cost but no mined input (iron ore and phosphate rock are
+not modelled: batteries take little of either); cathode takes its precursor and lithium; cells take cathode and
+anode, at GREET's kg per kWh. By molar mass, GREET's 0.08 kg of lithium per kWh of LFP is about 1.7 kg of iron
+phosphate per kWh. The quantities are real and sourced
 (`src/critmin_net/data/battery_2023_2024/`): USGS mine output times each mineral's EV share (IEA), IEA refining,
 cathode and cell shares, and IEA's EV battery demand by region and chemistry; every cost is a placeholder. It
 tests the mechanism, not the world: `python -m critmin_net.battery` solves it, and the solver tests check that
-both years are supplied with nothing unmet, that every mineral is taken in exactly demand x intensity, and
-that China, which refines most lithium and cobalt but mines little lithium and no cobalt, imports ore.
+both years are supplied with nothing unmet, that every mineral is taken in exactly demand x intensity (with
+losses off), that losses scale what goes in, and that China, which refines most lithium and cobalt but mines little lithium and no cobalt, imports ore.
 
 0.4.0 changed only how the model is written: across Alavi's parameters, the calibration and every hook, it
 builds the same Gurobi model as 0.3.0, by Gurobi's model fingerprint, and reports the same results and

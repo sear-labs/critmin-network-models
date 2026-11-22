@@ -16,6 +16,14 @@ version and says why here.
   anode, cathode, cells; LLNL's regions plus Special) for 2023-2024 on sourced quantities
   (`data/battery_2023_2024/`, new frozen inputs) and placeholder costs. Both years are supplied with nothing
   unmet and each mineral is taken in exactly demand x intensity. A test of the mechanism, PRELIMINARY.
+- `build(..., losses=...)`: a loss per stage, process or node, optionally by year (output = (1 - loss) x
+  recipe x input), over a network's own defaults (`net["losses"]`); `check_losses()` validates them. Off for
+  lithium. The battery network's defaults, `battery.LOSSES`, are chosen from `data/battery_2023_2024/stage_losses.csv`
+  (new frozen input: published losses by stage with sources); with them both years are still supplied. The
+  synthetic graphite placeholder cost rises from 3.0 to 4.0 so natural flake, after its spheronisation loss,
+  is still used first.
+- The battery network's LFP cathode takes battery-grade iron phosphate, a pCAM good with capacity and cost and no
+  mined input.
 - No change to the lithium model: across Alavi's parameters, the calibration and every hook (12 cases), `build()`
   makes the same Gurobi model as 0.3.0 (same fingerprint, variables, constraints and nonzeros). The baseline
   numbers are unchanged.

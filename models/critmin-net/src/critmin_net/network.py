@@ -11,6 +11,9 @@ Hooks (all off by default):
                        tariff (cost multiplier on the arc), quota (bound on arc flow), embargo
                        (arc fixed to zero), friendshore (every CHN->target arc closed)
   * yields             extraction yield per (mine tech, region): capacity x yield, and cost / yield
+  * losses             material lost in a process, as a share of what goes in, by stage, process or node
+                       (process + region), optionally by year: output = (1 - loss) x recipe x input. A network
+                       may carry its own defaults (net["losses"]); the argument overrides them key by key
   * limits             output ceiling per (stage, region) and year, e.g. China's refining cut to a
                        share of its business-as-usual output (the refining shock)
   * cobalt             a Co add-on: NMC cathode needs refined Co, mined in DRC (stylized)
@@ -226,6 +229,26 @@ def check_net(net):
         raise ValueError("goods must be out_t's, stage by stage")
 
 
+def check_losses(L, net, regions):
+    """Losses keyed by a stage, a process or a node (process + region), each a share in [0, 1) or {year: share}.
+    A key must name something with inputs to lose. Raises ValueError; returns L."""
+    procs = set(net["processes"])
+    has_in = {p for p in procs if net["recipe"][p]}
+    for k, v in L.items():
+        if k in net["stages"]:
+            if not any(p[0] == k for p in has_in):
+                raise ValueError(f"losses: no process at stage {k!r} has inputs (mining recovery is `yields`)")
+        elif isinstance(k, tuple) and (k in procs or (k[:-1] in procs and k[-1] in regions)):
+            if (k if k in procs else k[:-1]) not in has_in:
+                raise ValueError(f"losses: {k!r} has no inputs to lose")
+        else:
+            raise ValueError(f"losses: {k!r} is not a stage, process or node")
+        for x in (v.values() if isinstance(v, dict) else [v]):
+            if not 0.0 <= x < 1.0:
+                raise ValueError(f"losses: {k!r} must be in [0, 1), got {x!r}")
+    return L
+
+
 def by_year(v, y):
     return v[y] if isinstance(v, dict) else v
 
@@ -266,13 +289,15 @@ def data(regions=None):
 
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
-          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None):
+          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
     fix_int: integer solution from a previous solve; fixes the integers so the LP gives duals.
     stockpile: None (off), or a dict overriding STOCKPILE's defaults ({} for the defaults as they are).
     net: the network (LITHIUM by default): its sets, and its data if it carries any (see LITHIUM).
+    losses: {stage | process | node: share lost, or {year: share}}, over the network's own (net["losses"]); the
+      most specific key wins. Applies to processes with inputs; mining recovery is `yields`.
     """
     p = params or NOTEBOOK
     nt = LITHIUM if net is None else net
@@ -297,6 +322,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         R, Y = list(p["regions"]), list(nt["years"])
     Y_start = [y for y in Y if y < min(Y) + 5]; Y_warm = [y for y in Y if y >= min(Y) + 5]
     tactics = tactics or {}; yields = yields or {}; limits = limits or {}
+    LOSS = check_losses({**nt.get("losses", {}), **(losses or {})}, nt, R)
+
+    def loss(n, y):                                # share lost at node n in year y: node, then process, then stage
+        for k in (n, n[:-1], n[0]):
+            if k in LOSS:
+                return by_year(LOSS[k], y)
+        return 0.0
     extra = dict(extra_cell_demand or {})
     for k, v in p.get("grid_demand", {}).items():  # calibration: other grids' storage, exogenous
         extra[k] = extra.get(k, 0.0) + v
@@ -411,7 +443,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     for n in ALL:                                  # each input in its recipe's proportion
         for g, out_per_in in RCP[n[:-1]].items():
             for y in Y:
-                m.addConstr(prod[n, y] == out_per_in * cons[n, g, y])
+                m.addConstr(prod[n, y] == (1.0 - loss(n, y)) * out_per_in * cons[n, g, y])
     if alavi:                                      # Alavi's recycling: exactly her recycling demand, world-wide
         for tg in REC_T:
             for y in Y:
@@ -530,7 +562,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             if s in nt["value_alone"]:             # recycled chemicals: the recycling stage only
                 cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] for q in made_by[s, b])
             else:
-                cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / k for g, k in RCP[q].items())
+                cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / ((1.0 - loss(q + ('CHN',), y)) * k)
+                                                               for g, k in RCP[q].items())
                                   for q in made_by[s, b])
         return cv[s, b, y]
 
@@ -566,7 +599,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
-             hold_cost=hold_cost, net=nt, N=N, cons=cons)
+             hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS)
     return obj, h
 
 

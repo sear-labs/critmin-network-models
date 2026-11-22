@@ -1,7 +1,7 @@
 """A multi-mineral battery network on critmin-net's sets, 2023-2024: a test that the mechanism works. PRELIMINARY.
 
-Lithium, nickel, cobalt, manganese and graphite, through mining, refining, precursor (pCAM), anode, cathode and
-cells, on LLNL's regions plus "Special" (the DRC, for cobalt). Built by the same build() as the lithium model,
+Lithium, nickel, cobalt, manganese and graphite, through mining, refining, precursor (pCAM for NMC, battery-grade
+iron phosphate for LFP), anode, cathode and cells, on LLNL's regions plus "Special" (the DRC, for cobalt). Built by the same build() as the lithium model,
 with the network passed as data (network.LITHIUM explains the format). It is not a calibration. The quantities
 are real, read from public sources (data/battery_2023_2024/, one row per number with its source; load() says
 how each is used): mine output, the share of each mineral going to EV batteries, refining and manufacturing
@@ -14,11 +14,22 @@ Units: mined and refined goods and anode material in kt of contained element (gr
 cathode and cells in GWh of the cells they serve (pCAM and cathode as "GWh-equivalents"). A recipe's
 "output per unit input" is then 1 / (kg per kWh): material intensity read directly from the source.
 
-Simplifications, each deliberate for a mechanism test: refining recovers every unit of contained element; the
-anode is made from mined natural graphite one for one or from synthetic graphite (petroleum coke, not modelled
-as an input), the two routes sharing each region's anode capacity; LFP cathode takes lithium only (iron
-phosphate is not critical); no recycling, no storage batteries; capacity is fixed in every year at the observed
-level times HEADROOM, so nothing is built.
+LFP's precursor is battery-grade iron phosphate (FePO4), the pCAM stage's LFP good. Iron ore and phosphate rock
+are not modelled (batteries take a small share of either); the processing to battery grade is, as a stage with
+its own capacity and cost and no mined input. In mass, 1 kg of lithium in LiFePO4 comes with FEPO4_PER_LI kg of
+FePO4 (molar masses), so GREET's 0.08 kg of lithium per kWh is about 1.7 kg of FePO4 per kWh.
+
+Losses (network.build's `losses`): each process may lose a share of what goes in, by stage, process or node,
+optionally by year. LOSSES are the defaults, chosen from the published values in
+data/battery_2023_2024/stage_losses.csv (every row with its source; most are single projects or model
+assumptions); load() returns them and network(inputs, losses={}) runs without them. Mine output is USGS's,
+already net of mining and beneficiation losses, so losses start at refining. With losses, more is mined and
+refined than demand x intensity.
+
+Simplifications, each deliberate for a mechanism test: the anode is made from mined natural graphite or from
+synthetic graphite (petroleum coke, not modelled as an input), the two routes sharing each region's anode
+capacity; no recycling (manufacturing scrap is lost, not recycled), no storage batteries; capacity is fixed in
+every year at the observed level times HEADROOM, so nothing is built.
 """
 import pandas as pd
 
@@ -31,9 +42,28 @@ STAGES = ['mine', 'refine', 'pcam', 'anode', 'cath', 'cell']
 HEADROOM = 1.20                                  # capacity over observed output, as in network.calibrated()
 UNIT_COST = 1.0                                  # PLACEHOLDER: every stage's cost per unit in China; regions differ
                                                  # only by the Stanford GSB US/China ratios, as calibrated() uses
-SYNTHETIC_COST = 3.0                             # PLACEHOLDER: synthetic anode graphite per unit, above natural's (mined
-                                                 # plus processed, 2.0), so mined flake is used first, as it is cheaper
+SYNTHETIC_COST = 4.0                             # PLACEHOLDER: synthetic anode graphite per unit, above natural's (mined
+                                                 # flake through spheronisation's loss, 1 / 0.395, plus processing, 1: 3.5),
+                                                 # so mined flake is used first, as it is cheaper
+FEPO4_PER_LI = (55.845 + 30.974 + 4 * 15.999) / 6.94   # kg FePO4 per kg Li in LiFePO4 (standard atomic weights)
 DATA = N.RAW / "battery_2023_2024"
+# Default losses, share of what goes in (rows of stage_losses.csv). Each can be changed per run (network(losses=)).
+LOSSES = {
+    ('refine', 'Li', 'Li'): 0.077,   # spodumene concentrate to Li2CO3, 0.923 (Kelly et al. 2021, Table 5; derived).
+                                     # Brine's LiCl to carbonate is 0.783 and its pond losses unknown: one route here
+    ('refine', 'Ni', 'Ni'): 0.074,   # laterite ore to NiSO4 by HPAL, 0.926 (Sunrise NI 43-101, year 3; one project).
+                                     # Sulfide smelting to refining is 0.895 (Wei et al. 2020)
+    ('refine', 'Co', 'Co'): 0.004,   # refinery solution to CoSO4, 0.996 (Sunrise): the refinery step only, as nothing
+                                     # citable was found for cobalt hydroxide to sulfate
+    ('refine', 'Mn', 'Mn'): 0.13,    # ore to high-purity Mn sulphate, 0.87 (Giyani K.Hill DFS 2026; one project,
+                                     # read in a news report)
+    'pcam': 0.0,                     # GREET assumes 100% material efficiency; no measured yield found
+    ('anode', 'natural', 'anode'): 0.605,  # flake concentrate to coated spherical graphite, 0.395 (Argonne 2022,
+                                     # Table 3, Engels' data; the fines are a saleable co-product, lost here)
+    'cath': 0.0,                     # GREET assumes 100%; no measured yield found
+    'cell': {2023: 0.10, 2024: 0.094},     # manufacturing scrap: IEA GEVO 2024, 10% in 2023 falling to 6% in 2030
+                                     # (2024 linear between them, ours); lost until recycling takes scrap
+}
 NAME = {'lithium': 'Li', 'nickel': 'Ni', 'cobalt': 'Co', 'manganese': 'Mn', 'graphite': 'graphite'}
 CHEMS = {'nmc_hi': ('NMC811', 'High-nickel'),    # IEA's high-nickel group (NMC622/721/811, NCA) at NMC811's intensity
          'nmc_lo': ('NMC532', 'Low-nickel'),     # IEA's low-nickel group (NMC333/442/532) at NMC532's
@@ -44,7 +74,7 @@ def sets(intensity):
     """The network's sets for these chemistries. intensity: {chemistry: {mineral: kg per kWh}}."""
     chems = list(intensity)
     nmc = [c for c in chems if intensity[c].get('Ni', 0) > 0]          # layered oxides need a Ni/Co/Mn precursor
-    out_t = {'mine': list(MINERALS), 'refine': ['Li', 'Ni', 'Co', 'Mn'], 'pcam': nmc, 'anode': ['anode'],
+    out_t = {'mine': list(MINERALS), 'refine': ['Li', 'Ni', 'Co', 'Mn'], 'pcam': chems, 'anode': ['anode'],
              'cath': chems, 'cell': [f"GWh_{c}" for c in chems]}
     procs, recipe = [], {}
 
@@ -54,16 +84,16 @@ def sets(intensity):
         add(('mine', m), {})
     for m in out_t['refine']:
         add(('refine', m, m), {('mine', m): 1.0})
-    for c in nmc:
-        add(('pcam', 'sulfates', c), {('refine', x): 1.0 / intensity[c][x] for x in ('Ni', 'Co', 'Mn')
-                                      if intensity[c].get(x, 0) > 0})
+    for c in chems:
+        if c in nmc:
+            add(('pcam', 'sulfates', c), {('refine', x): 1.0 / intensity[c][x] for x in ('Ni', 'Co', 'Mn')
+                                          if intensity[c].get(x, 0) > 0})
+        else:                                    # battery-grade FePO4 from iron and purified phosphoric acid (not modelled)
+            add(('pcam', 'fepo4', c), {})
     add(('anode', 'natural', 'anode'), {('mine', 'graphite'): 1.0})
     add(('anode', 'synthetic', 'anode'), {})
     for c in chems:
-        r = {('refine', 'Li'): 1.0 / intensity[c]['Li']}
-        if c in nmc:
-            r[('pcam', c)] = 1.0
-        add(('cath', 'pcam' if c in nmc else 'fepo4', c), r)
+        add(('cath', 'pcam', c), {('refine', 'Li'): 1.0 / intensity[c]['Li'], ('pcam', c): 1.0})
     for c in chems:
         add(('cell', 'cath_anode', f"GWh_{c}"), {('cath', c): 1.0, ('anode', 'anode'): 1.0 / intensity[c]['graphite']})
     goods = [(s, g) for s in STAGES for g in out_t[s]]
@@ -74,15 +104,17 @@ def sets(intensity):
                 max_new_units=0, short_stages=('cell',), value_alone=(), short_gwh={})
 
 
-def network(inputs):
+def network(inputs, losses=None):
     """(net, params, build options, need) for build() from the inputs (load() makes them).
 
     inputs: intensity {chem: {mineral: kg/kWh}}; demand {(chem, region, year): GWh};
     mine {(mineral, region, year): kt available to EV batteries}; share {(stage, key, region, year): share},
     key a mineral (refine), a chemistry (pcam, cath), 'anode' or 'cell'; cost_ratio {stage: US/China cost}.
-    need is {(mineral, year): kt}, demand x intensity, the world's requirement.
+    need is {(mineral, year): kt}, demand x intensity, the world's requirement (before losses).
+    losses: the network's losses (see network.build); inputs["losses"] if None, {} for none.
     """
     net = sets(inputs["intensity"])
+    net["losses"] = dict(inputs.get("losses", {}) if losses is None else losses)
     I, D, sh = inputs["intensity"], inputs["demand"], inputs["share"]
     gwh = {(c, y): sum(v for (c2, _, y2), v in D.items() if (c2, y2) == (c, y)) for c in I for y in YEARS}
     need = {(m, y): sum(gwh[c, y] * I[c].get(m, 0.0) for c in I) for m in MINERALS for y in YEARS}
@@ -137,6 +169,7 @@ def load():
                pCAM and cathode: calibration/'s 2024 cathode capacity shares, both years (no pCAM data: pCAM at
                cathode's shares). Cells: IEA capacity by region (2023 by maker's region of plant, 2024 nameplate).
     Countries map to regions by regions.csv.
+    losses     LOSSES (chosen from stage_losses.csv).
     """
     reg = _read("regions")
     to_r = {(r.name, r.context if isinstance(r.context, str) else ""): r.region for r in reg.itertuples()}
@@ -213,7 +246,7 @@ def load():
     cath = cal[(cal.model_stage == "cath") & (cal.use == "yes")]
     for r in cath.itertuples():
         for c in (['nmc_hi', 'nmc_lo'] if r.chemistry == 'nmc' else ['lfp']):
-            for s in (('pcam', 'cath') if c != 'lfp' else ('cath',)):
+            for s in ('pcam', 'cath'):
                 for y in YEARS:
                     k = (s, c, region(r.country), y)
                     share[k] = share.get(k, 0.0) + r.value / 100
@@ -229,15 +262,15 @@ def load():
     sc = pd.read_csv(N.CAL / "stage_costs_us_china.csv").pivot(index="stage", columns="region", values="usd")
     ratio = {'pcam': sc.loc['proc', 'US'] / sc.loc['proc', 'CHN'], 'cath': sc.loc['cath', 'US'] / sc.loc['cath', 'CHN'],
              'cell': sc.loc['cell', 'US'] / sc.loc['cell', 'CHN']}
-    return dict(intensity=intensity, demand=demand, mine=mine, share=share, cost_ratio=ratio)
+    return dict(intensity=intensity, demand=demand, mine=mine, share=share, cost_ratio=ratio, losses=dict(LOSSES))
 
 
-def run(inputs=None, env=None):
+def run(inputs=None, env=None, losses=None):
     """Solve and summarise: per mineral and year, what is mined, refined and taken by recipes (kt), the world's
     need from demand x intensity, unmet cells, each region's share of each stage, and the trade by stage."""
     import gurobipy as gp
     from gurobipy import GRB
-    net, params, kw, need = network(inputs or load())
+    net, params, kw, need = network(inputs or load(), losses)
     m = gp.Model(env=env); m.Params.OutputFlag = 0
     obj, h = N.build(m, params, net=net, **kw)
     m.setObjective(obj, GRB.MINIMIZE); m.optimize()
