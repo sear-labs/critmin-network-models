@@ -3,6 +3,23 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.4.0 (2026-11-21)
+
+- The network is described as sets: `MINERALS` (lithium only for now), `GOODS` (with `MINERAL_OF`),
+  `PROCESSES` and `RECIPE` (inputs per process, output per unit input), and `build()` makes every balance,
+  trade arc and input variable from them. A process may now take several inputs. `IN_T` and `OUT_T` move to
+  module level; the input variables are keyed (node, input good, year).
+- `build(..., net=...)`: the network is an argument, its sets and optionally its own years, costs and demand
+  (`network.LITHIUM`, the default, documents the format; `check_net()` checks a network's sets). Embedded
+  values follow the recipes; levers, the stockpile and results read the network's stages and goods.
+- `critmin_net.battery`: a multi-mineral test network (Li, Ni, Co, Mn, graphite; mining, refining, pCAM,
+  anode, cathode, cells; LLNL's regions plus Special) for 2023-2024 on sourced quantities
+  (`data/battery_2023_2024/`, new frozen inputs) and placeholder costs. Both years are supplied with nothing
+  unmet and each mineral is taken in exactly demand x intensity. A test of the mechanism, PRELIMINARY.
+- No change to the lithium model: across Alavi's parameters, the calibration and every hook (12 cases), `build()`
+  makes the same Gurobi model as 0.3.0 (same fingerprint, variables, constraints and nonzeros). The baseline
+  numbers are unchanged.
+
 ## 0.3.0 (2026-11-21)
 
 - The stockpile hook (`build(stockpile=...)`, options and defaults in `STOCKPILE`): stock carried between

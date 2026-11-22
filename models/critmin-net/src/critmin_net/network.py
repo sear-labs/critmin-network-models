@@ -90,6 +90,40 @@ RATIO = {'proc': {'loh': 3.45101, 'lce': 5.324},
          'pack': {'bev_nmc': 1 / 62, 'phev_nmc': 1 / 15, 'bev_lfp': 1 / 62, 'phev_lfp': 1 / 15},
          'rec': {'loh': 30, 'lce': 35}}
 SHORT_GWH = {**{t: 1.0 for t in CELL_T}, **{t: 1 / RATIO['pack'][t] for t in PACK_T}}   # cell GWh per unit unmet
+
+# ---- the network as sets: minerals, goods, processes and their recipes
+# A good is (the stage that makes it, its name). A process makes one good: a mine is (stage, ore), every other
+# process (stage, input, output), and RECIPE[process] = {input good: output per unit of that input} (empty for
+# mines). A node is a process in a region: process + (region,). build() makes every balance, trade arc and
+# input variable from these sets, so a new mineral, stage or input is new entries here, not new constraints.
+# Lithium's chain has one input per process; a process with several (a precursor and lithium into cathode,
+# say) is a recipe with several entries.
+MINERALS = ['Li']
+STAGE_IN = {'proc': 'mine', 'cath': 'proc', 'cell': 'cath', 'pack': 'cell', 'rec': 'pack'}   # whose goods a stage uses
+OUT_T = {'mine': MINE_T, 'proc': PROC_T, 'cath': CATH_T, 'cell': CELL_T, 'pack': PACK_T, 'rec': REC_T}
+IN_T = {st: OUT_T[u] for st, u in STAGE_IN.items()}
+GOODS = [(st, g) for st in STAGES for g in OUT_T[st]]
+MINERAL_OF = {g: ('Li' if g[0] in ('mine', 'proc', 'rec') else None) for g in GOODS}   # None: a product carrying several
+PROCESSES = ([('mine', t) for t in MINE_T]
+             + [(st, a, b) for st in STAGES[1:] for a in IN_T[st] for b in OUT_T[st]])
+RECIPE = {p: ({} if p[0] == 'mine' else {(STAGE_IN[p[0]], p[1]): RATIO[p[0]][p[2]]}) for p in PROCESSES}
+
+
+def output(p):
+    """The good process p makes."""
+    return (p[0], p[-1])
+
+
+def _check_sets():
+    """The sets describe one connected network: every input is a good, every good is made, every mineral used."""
+    goods = set(GOODS)
+    assert {output(p) for p in PROCESSES} == goods, "a good no process makes, or a process making no good"
+    assert all(g in goods for p in PROCESSES for g in RECIPE[p]), "a recipe input that is not a good"
+    assert set(MINERAL_OF.values()) - {None} == set(MINERALS), "MINERALS and MINERAL_OF disagree"
+
+
+_check_sets()
+
 MAX_CAP = {'mine': 25, 'proc': 100, 'cath': 12, 'cell': 100, 'pack': 1, 'rec': 15}
 MAX_NEW_UNITS, INIT_ACTIVE = 25, 80
 INIT_CAPACITY = {'mine': 1000, 'proc': 2500, 'cath': 500, 'cell': 2500, 'pack': 80, 'rec': 250}
@@ -164,6 +198,34 @@ STOCKPILE = dict(
                                                   # there either)
 
 
+# A network for build(): its sets and per-stage capacity settings, and optionally its data. LITHIUM (the default)
+# takes its costs, years and demand from Alavi's tables; a network that carries its own data adds
+#   years   [year, ...]
+#   cost    {stage: (prod, var, fixed)}, each {node[1:] + (year,): cost}: per unit made, per unit of capacity
+#           added, per unit (plant) built
+#   demand  {(good, region, year): final demand}
+# and takes its regions from params["regions"] and its starting capacity from params["init_cap"].
+LITHIUM = dict(minerals=MINERALS, stages=STAGES, goods=GOODS, mineral_of=MINERAL_OF, processes=PROCESSES,
+               recipe=RECIPE, out_t=OUT_T,
+               max_cap=MAX_CAP, init_capacity=INIT_CAPACITY, init_active=INIT_ACTIVE, max_new_units=MAX_NEW_UNITS,
+               short_stages=('cell', 'pack'),     # stages whose final demand may go unmet, at a penalty
+               value_alone=('rec',),              # goods valued at their own stage's cost (recycled chemicals)
+               short_gwh=SHORT_GWH)               # cell GWh per unit unmet, for reporting
+
+
+def check_net(net):
+    """A network's sets describe one connected network (see _check_sets). Raises ValueError."""
+    goods = set(net["goods"])
+    if {output(p) for p in net["processes"]} != goods:
+        raise ValueError("a good no process makes, or a process making no good")
+    if not all(g in goods for p in net["processes"] for g in net["recipe"][p]):
+        raise ValueError("a recipe input that is not a good")
+    if set(net["mineral_of"].values()) - {None} != set(net["minerals"]):
+        raise ValueError("minerals and mineral_of disagree")
+    if [g for g in net["goods"]] != [(st, n) for st in net["stages"] for n in net["out_t"][st]]:
+        raise ValueError("goods must be out_t's, stage by stage")
+
+
 def by_year(v, y):
     return v[y] if isinstance(v, dict) else v
 
@@ -204,14 +266,22 @@ def data(regions=None):
 
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
-          ev_scale=1.0, fix_int=None, limits=None, stockpile=None):
+          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
     fix_int: integer solution from a previous solve; fixes the integers so the LP gives duals.
     stockpile: None (off), or a dict overriding STOCKPILE's defaults ({} for the defaults as they are).
+    net: the network (LITHIUM by default): its sets, and its data if it carries any (see LITHIUM).
     """
     p = params or NOTEBOOK
+    nt = LITHIUM if net is None else net
+    STG, GDS, RCP, OUTT = nt["stages"], nt["goods"], nt["recipe"], nt["out_t"]
+    alavi = "cost" not in nt                       # lithium on Alavi's tables, or a network carrying its own data
+    if not alavi:
+        check_net(nt)
+        if cobalt:
+            raise ValueError("cobalt is the lithium network's add-on; a network with cobalt in it has it as a mineral")
     alpha, import_coef, region_share = p["alpha"], p["import_coef"], p["region_share"]
     alpha_stage, init_cap, fixed_cap = p.get("alpha_stage", {}), p.get("init_cap"), p.get("fixed_cap", {})
     adv = p.get("tariff_advalorem", {"targets": [], "rates": {}})
@@ -221,7 +291,10 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
 
     def a_(s, r):                                  # her alpha, unless a stage-specific one is given
         return alpha_stage.get(s, {}).get(r, alpha[r])
-    D = data(p.get("regions")); R, Y = D["R"], D["Y"]
+    if alavi:
+        D = data(p.get("regions")); R, Y = D["R"], D["Y"]
+    else:
+        R, Y = list(p["regions"]), list(nt["years"])
     Y_start = [y for y in Y if y < min(Y) + 5]; Y_warm = [y for y in Y if y >= min(Y) + 5]
     tactics = tactics or {}; yields = yields or {}; limits = limits or {}
     extra = dict(extra_cell_demand or {})
@@ -236,40 +309,47 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         w = df[df.Year.isin(Y) & df.Technology.isin(MINE_T)]
         return {(r.Technology, r.Region, int(r.Year)): r.Cost for r in w.itertuples()}
 
-    cost = {'mine': tuple(mine_d(D[f"mine_{k}"]) for k in ("prod", "var", "fixed"))}
-    for s, (ins, outs) in {'proc': (MINE_T, PROC_T), 'cath': (PROC_T, CATH_T),
-                           'cell': (CATH_T, CELL_T), 'pack': (CELL_T, PACK_T),
-                           'rec': (PACK_T, REC_T)}.items():
-        cost[s] = tuple(io(D[f"{s}_{k}"], ins, outs) for k in ("prod", "var", "fixed"))
+    if alavi:
+        cost = {'mine': tuple(mine_d(D[f"mine_{k}"]) for k in ("prod", "var", "fixed"))}
+        for s, (ins, outs) in {'proc': (MINE_T, PROC_T), 'cath': (PROC_T, CATH_T),
+                               'cell': (CATH_T, CELL_T), 'pack': (CELL_T, PACK_T),
+                               'rec': (PACK_T, REC_T)}.items():
+            cost[s] = tuple(io(D[f"{s}_{k}"], ins, outs) for k in ("prod", "var", "fixed"))
+    else:
+        cost = nt["cost"]
 
     def share(df, techs, scale=1.0):
         w = df[df.Year.isin(Y) & df.Technology.isin(techs) & (df.Region == 'US')]
         return {(r.Technology, rg, int(r.Year)): scale * region_share[rg] * r.Demand
                 for r in w.itertuples() for rg in R}
 
-    demand_pack = share(D["pack_demand"], PACK_T, ev_scale)
-    demand_rec = share(D["rec_demand"], REC_T)
+    if alavi:
+        demand_pack = share(D["pack_demand"], PACK_T, ev_scale)
+        demand_rec = share(D["rec_demand"], REC_T)
 
-    N = {'mine': [('mine', t, r) for t in MINE_T for r in R],
-         'proc': [('proc', a, b, r) for a in MINE_T for b in PROC_T for r in R],
-         'cath': [('cath', a, b, r) for a in PROC_T for b in CATH_T for r in R],
-         'cell': [('cell', a, b, r) for a in CATH_T for b in CELL_T for r in R],
-         'pack': [('pack', a, b, r) for a in CELL_T for b in PACK_T for r in R],
-         'rec': [('rec', a, b, r) for a in PACK_T for b in REC_T for r in R]}
-    ALL = [n for s in STAGES for n in N[s]]
-    IN_T = {'proc': MINE_T, 'cath': PROC_T, 'cell': CATH_T, 'pack': CELL_T, 'rec': PACK_T}
-    OUT_T = {'mine': MINE_T, 'proc': PROC_T, 'cath': CATH_T, 'cell': CELL_T, 'pack': PACK_T, 'rec': REC_T}
-    trade = {'mine': [('mine', t, i, j) for t in MINE_T for i in R for j in R if i != j]}
-    for s in STAGES[1:]:
-        trade[s] = [(s, a, b, i, j) for a in IN_T[s] for b in OUT_T[s] for i in R for j in R if i != j]
-    t_in = {s: {n: [] for n in N[s]} for s in STAGES}; t_out = {s: {n: [] for n in N[s]} for s in STAGES}
-    for s in STAGES:
-        for k, a in enumerate(trade[s]):
-            src = (s, a[1], a[2]) if s == 'mine' else (s, a[1], a[2], a[3])
-            dst = (s, a[1], a[3]) if s == 'mine' else (s, a[1], a[2], a[4])
-            t_out[s][src].append(k); t_in[s][dst].append(k)
+    def final_demand(g, r, y):                     # a good's final demand; cells add grid storage (extra)
+        s, name = g
+        if alavi:
+            return {'cell': extra.get((name, r, y), 0.0), 'pack': demand_pack.get((name, r, y), 0.0),
+                    'rec': demand_rec.get((name, r, y), 0.0)}.get(s, 0.0)
+        d = ev_scale * nt["demand"].get((g, r, y), 0.0) if s == 'pack' else nt["demand"].get((g, r, y), 0.0)
+        return d + extra.get((name, r, y), 0.0) if s == 'cell' else d
 
-    flow = {s: {(k, y): m.addVar() for k in range(len(trade[s])) for y in Y} for s in STAGES}
+    N = {s: [p + (r,) for p in nt["processes"] if p[0] == s for r in R] for s in STG}   # nodes, by stage
+    ALL = [n for s in STG for n in N[s]]
+    trade = {s: [p + (i, j) for p in nt["processes"] if p[0] == s for i in R for j in R if i != j] for s in STG}
+    t_in = {s: {n: [] for n in N[s]} for s in STG}; t_out = {s: {n: [] for n in N[s]} for s in STG}
+    for s in STG:
+        for k, a in enumerate(trade[s]):           # an arc carries its node's output from region a[-2] to a[-1]
+            t_out[s][a[:-2] + (a[-2],)].append(k); t_in[s][a[:-2] + (a[-1],)].append(k)
+    makers = {(g, r): [] for g in GDS for r in R}     # the nodes in r that make good g
+    users = {(g, r): [] for g in GDS for r in R}      # the nodes in r whose recipe takes good g
+    for n in ALL:
+        makers[output(n[:-1]), n[-1]].append(n)
+        for g in RCP[n[:-1]]:
+            users[g, n[-1]].append(n)
+
+    flow = {s: {(k, y): m.addVar() for k in range(len(trade[s])) for y in Y} for s in STG}
     vt = GRB.CONTINUOUS if fix_int is not None else GRB.INTEGER
     prod = {(n, y): m.addVar() for n in ALL for y in Y}
     cap = {(n, y): m.addVar() for n in ALL for y in Y}
@@ -284,19 +364,18 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     if fix_int is not None:
         for key, v in inv.items(): v.lb = v.ub = fix_int["inv"][key]
         for key, v in act.items(): v.lb = v.ub = fix_int["act"][key]
-    cons = {s: {(a, b, r, y): m.addVar() for a in IN_T[s] for b in OUT_T[s] for r in R for y in Y}
-            for s in STAGES[1:]}
+    cons = {(n, g, y): m.addVar() for n in ALL for g in RCP[n[:-1]] for y in Y}   # input g taken by node n
     sp = None if stockpile is None else {**STOCKPILE, **stockpile}
     stock = {}                                     # (stage, good, region, year): stock held at the year's end
     if sp is not None:
         if set(sp) != set(STOCKPILE):
             raise ValueError(f"stockpile: unknown options {sorted(set(sp) - set(STOCKPILE))}")
-        if not set(sp["stages"]) <= set(STAGES) - {'rec'}:
+        if not set(sp["stages"]) <= set(STG) - {'rec'}:
             raise ValueError(f"stockpile: stages must be among {STOCKPILE['stages']} (recycling output is not stocked)")
         sp_r = R if sp["regions"] == 'all' else list(sp["regions"])
         if not set(sp_r) <= set(R):
             raise ValueError(f"stockpile: regions {sorted(set(sp_r) - set(R))} are not in the model ({R})")
-        stock = {(st, g, r, y): m.addVar() for st in sp["stages"] for g in OUT_T[st] for r in sp_r for y in Y}
+        stock = {(st, g, r, y): m.addVar() for st in sp["stages"] for g in OUTT[st] for r in sp_r for y in Y}
     m.update()
 
     def draw(st, g, r, y):                         # stock drawn down in year y (negative when built up)
@@ -305,73 +384,41 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         prev = stock[st, g, r, y - 1] if y > min(Y) else sp["initial"].get((st, g, r), 0.0)
         return prev - stock[st, g, r, y]
 
-    def fin(s, n, y):
-        return quicksum(flow[s][k, y] for k in t_in[s][n])
-
-    def fout(s, n, y):
-        return quicksum(flow[s][k, y] for k in t_out[s][n])
-
-    for tm in MINE_T:
-        for r in R:
-            for y in Y:
-                n = ('mine', tm, r)
-                m.addConstr(prod[n, y] + fin('mine', n, y) + draw('mine', tm, r, y) == fout('mine', n, y)
-                            + quicksum(cons['proc'][tm, tp, r, y] for tp in PROC_T))
-    nxt = {'proc': 'cath', 'cath': 'cell', 'cell': 'pack'}
     cell_bal, short_cap = {}, {}
     # unmet demand, where it is consumed: each region's grid cells (its storage, and ERCOT's) and its packs,
     # each at most that demand. A shortfall cannot become cells that are packed and shipped elsewhere.
     # Not in the last year: capacity for it serves one year, so the horizon's end would read as a shortage.
-    short = ({(to, r, y): m.addVar() for to in CELL_T + PACK_T for r in R for y in Y if y < max(Y)}
+    short_stage = {name: st for st in nt["short_stages"] if st in STG for name in OUTT[st]}
+    short = ({(to, r, y): m.addVar() for to in short_stage for r in R for y in Y if y < max(Y)}
              if short_mult else {})
-    for s in ('proc', 'cath', 'cell'):
-        for to in OUT_T[s]:
-            for r in R:
-                for y in Y:
-                    lhs = (quicksum(prod[(s, ti, to, r), y] for ti in IN_T[s])
-                           + quicksum(flow[s][k, y] for ti in IN_T[s] for k in t_in[s][(s, ti, to, r)])
-                           + draw(s, to, r, y))
-                    rhs = (quicksum(flow[s][k, y] for ti in IN_T[s] for k in t_out[s][(s, ti, to, r)])
-                           + quicksum(cons[nxt[s]][to, tn, r, y] for tn in OUT_T[nxt[s]]))
-                    if s == 'cell':
-                        rhs += extra.get((to, r, y), 0.0)
-                        if (to, r, y) in short:    # grid cells demanded but not supplied: unmet, at a penalty
-                            lhs += short[to, r, y]
-                            short_cap[to, r, y] = m.addConstr(short[to, r, y] <= extra.get((to, r, y), 0.0))
-                        cell_bal[to, r, y] = m.addConstr(lhs == rhs)
-                    else:
-                        m.addConstr(lhs == rhs)
-    for to in PACK_T:
+    for g in GDS:                                # every good, region and year: made + imported + drawn from stock
+        s, name = g                                # == exported + taken by recipes + final demand
         for r in R:
             for y in Y:
-                spk = 0.0
-                if (to, r, y) in short:                    # packs demanded but not supplied: unmet, at a penalty
-                    spk = short[to, r, y]
-                    m.addConstr(spk <= demand_pack[(to, r, y)])
-                m.addConstr(quicksum(prod[('pack', ti, to, r), y] for ti in CELL_T) + spk + draw('pack', to, r, y)
-                            + quicksum(flow['pack'][k, y] for ti in CELL_T for k in t_in['pack'][('pack', ti, to, r)])
-                            == quicksum(flow['pack'][k, y] for ti in CELL_T for k in t_out['pack'][('pack', ti, to, r)])
-                            + demand_pack[(to, r, y)]
-                            + quicksum(cons['rec'][to, tg, r, y] for tg in REC_T))
-    for tg in REC_T:
-        for r in R:
+                supply = (quicksum(prod[n, y] for n in makers[g, r])
+                          + quicksum(flow[s][k, y] for n in makers[g, r] for k in t_in[s][n])
+                          + draw(s, name, r, y))
+                use = (quicksum(flow[s][k, y] for n in makers[g, r] for k in t_out[s][n])
+                       + quicksum(cons[n, g, y] for n in users[g, r]))
+                demand = final_demand(g, r, y)
+                use += demand
+                if short_stage.get(name) == s and (name, r, y) in short:   # demanded, not supplied: unmet, at a penalty
+                    supply += short[name, r, y]
+                    c = m.addConstr(short[name, r, y] <= demand)
+                    if s == 'cell': short_cap[name, r, y] = c
+                bal = m.addConstr(supply == use)
+                if s == 'cell': cell_bal[name, r, y] = bal
+    for n in ALL:                                  # each input in its recipe's proportion
+        for g, out_per_in in RCP[n[:-1]].items():
             for y in Y:
-                m.addConstr(quicksum(prod[('rec', tk, tg, r), y] for tk in PACK_T)
-                            + quicksum(flow['rec'][k, y] for tk in PACK_T for k in t_in['rec'][('rec', tk, tg, r)])
-                            == quicksum(flow['rec'][k, y] for tk in PACK_T for k in t_out['rec'][('rec', tk, tg, r)])
-                            + demand_rec[(tg, r, y)])
-    for s in STAGES[1:]:
-        for a in IN_T[s]:
-            for b in OUT_T[s]:
-                for r in R:
-                    for y in Y:
-                        m.addConstr(prod[(s, a, b, r), y] == RATIO[s][b] * cons[s][a, b, r, y])
-    for tg in REC_T:
-        for y in Y:
-            m.addConstr(quicksum(prod[('rec', tk, tg, r), y] for tk in PACK_T for r in R)
-                        == quicksum(demand_rec[(tg, r, y)] for r in R))
+                m.addConstr(prod[n, y] == out_per_in * cons[n, g, y])
+    if alavi:                                      # Alavi's recycling: exactly her recycling demand, world-wide
+        for tg in REC_T:
+            for y in Y:
+                m.addConstr(quicksum(prod[('rec', tk, tg, r), y] for tk in PACK_T for r in R)
+                            == quicksum(demand_rec[(tg, r, y)] for r in R))
     for n in ALL:
-        mc = MAX_CAP[n[0]]
+        mc = nt["max_cap"][n[0]]
         for y in Y:
             yl = yields.get((n[1], n[2]), 1.0) if n[0] == 'mine' else 1.0
             m.addConstr(prod[n, y] <= yl * cap[n, y])
@@ -383,12 +430,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         if n in fixed_cap:                         # calibration: capacity fixed (a number, or by year)
             for y in Y: m.addConstr(cap[n, y] == by_year(fixed_cap[n], y))
         for y in Y_start:
-            m.addConstr(act[n, y] == INIT_ACTIVE)
+            m.addConstr(act[n, y] == nt["init_active"])
             if n not in fixed_cap:
-                m.addConstr(cap[n, y] == (INIT_CAPACITY[n[0]] if init_cap is None else by_year(init_cap.get(n, 0.0), y)))
-    for s in STAGES:
+                m.addConstr(cap[n, y] == (nt["init_capacity"][n[0]] if init_cap is None
+                                          else by_year(init_cap.get(n, 0.0), y)))
+    for s in STG:
         for y in Y:
-            m.addConstr(quicksum(inv[n, y] for n in N[s]) <= MAX_NEW_UNITS * every)   # her yearly limit, per build year
+            m.addConstr(quicksum(inv[n, y] for n in N[s]) <= nt["max_new_units"] * every)   # her yearly limit, per build year
     # calibration: from 2031 each region's capacity at a stage (by chemistry for cathode) grows by at most
     # its ramp plus a floor, over each build period; no ceiling. `over` keeps capacity against IEA's path.
     over = {}
@@ -415,7 +463,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     if y > min(Y): m.addConstr(v >= stock[st, g, r, y - 1])
         for (st, r), cap_s in sp["max"].items():
             for y in Y:
-                m.addConstr(quicksum(stock[st, g, r, y] for g in OUT_T[st] if (st, g, r, y) in stock) <= cap_s)
+                m.addConstr(quicksum(stock[st, g, r, y] for g in OUTT[st] if (st, g, r, y) in stock) <= cap_s)
 
     # ---- LLNL-TR-859392 levers on CHN -> US arcs
     # Targets: the US alone, or the US and its allies (ALLY; AUS in her three regions). LLNL-TR-859392
@@ -427,17 +475,17 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     def coerced(i, j):
         return i == 'CHN' and j in targets
 
-    for s in STAGES:
+    for s in STG:
         for k, a in enumerate(trade[s]):
-            i, j = (a[2], a[3]) if s == 'mine' else (a[3], a[4])
+            i, j = a[-2], a[-1]
             if coerced(i, j) and (tactics.get("friendshore") or s in tactics.get("embargo", ())):
                 for y in Y:
                     if y >= y_from: flow[s][k, y].ub = 0.0
     if no_transship:                               # calibration: exports of a good <= own production of it
-        for s in STAGES:
+        for s in STG:
             for r in R:
-                for b in OUT_T[s]:
-                    src = [n for n in N[s] if n[-1] == r and (n[1] if s == 'mine' else n[2]) == b]
+                for b in OUTT[s]:
+                    src = [n for n in N[s] if n[-1] == r and n[-2] == b]
                     for y in Y:
                         m.addConstr(quicksum(flow[s][k, y] for n in src for k in t_out[s][n])
                                     <= quicksum(prod[n, y] for n in src))
@@ -448,22 +496,22 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                                      if a[-2:] == ('CHN', j)) <= q)
 
     # ---- objective, exactly as in her notebook (plus the hooks)
-    def stage_cost(s, r):
+    def stage_cost(s, r):                          # costs keyed node[1:] + (year,): (ore, region, year) for mines
         pc, vc, fc = cost[s]
+        ns = [n for n in N[s] if n[-1] == r]
         if s == 'mine':
-            return a_(s, r) * (quicksum(prod[('mine', t, r), y] * pc[(t, r, y)] / yields.get((t, r), 1.0)
-                                        for y in Y for t in MINE_T)
-                               + quicksum(newc[('mine', t, r), y] * vc[(t, r, y)] for y in Y for t in MINE_T)
-                               + quicksum(inv[('mine', t, r), y] * fc[(t, r, y)] for y in Y for t in MINE_T))
-        return a_(s, r) * (quicksum(prod[(s, a, b, r), y] * pc[(a, b, r, y)] for y in Y for a in IN_T[s] for b in OUT_T[s])
-                           + quicksum(newc[(s, a, b, r), y] * vc[(a, b, r, y)] for y in Y for a in IN_T[s] for b in OUT_T[s])
-                           + quicksum(inv[(s, a, b, r), y] * fc[(a, b, r, y)] for y in Y for a in IN_T[s] for b in OUT_T[s]))
+            return a_(s, r) * (quicksum(prod[n, y] * pc[n[1:] + (y,)] / yields.get((n[1], r), 1.0) for y in Y for n in ns)
+                               + quicksum(newc[n, y] * vc[n[1:] + (y,)] for y in Y for n in ns)
+                               + quicksum(inv[n, y] * fc[n[1:] + (y,)] for y in Y for n in ns))
+        return a_(s, r) * (quicksum(prod[n, y] * pc[n[1:] + (y,)] for y in Y for n in ns)
+                           + quicksum(newc[n, y] * vc[n[1:] + (y,)] for y in Y for n in ns)
+                           + quicksum(inv[n, y] * fc[n[1:] + (y,)] for y in Y for n in ns))
 
     def import_cost(r):
         tot = 0
-        for s in STAGES:
+        for s in STG:
             for k, a in enumerate(trade[s]):
-                i, j = (a[2], a[3]) if s == 'mine' else (a[3], a[4])
+                i, j = a[-2], a[-1]
                 if j != r:
                     continue
                 tau = tariff.get(s, 0.0) if coerced(i, j) else 0.0
@@ -473,31 +521,30 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     tot += quicksum((kappa + tau) * value(s, a, y) * flow[s][k, y] for y in Y)
         return import_coef[r] * tot + advalorem_cost(r)
 
-    PREV = {'proc': 'mine', 'cath': 'proc', 'cell': 'cath', 'pack': 'cell'}
     cv = {}
+    made_by = {g: [q for q in nt["processes"] if output(q) == g] for g in GDS}
 
-    def embedded(s, b, y):                         # China's unit cost of good b, with everything inside it
-        if (s, b, y) not in cv:
-            if s == 'mine':
-                cv[s, b, y] = cost['mine'][0][(b, 'CHN', y)]
-            elif s == 'rec':                       # recycled chemicals: the recycling stage only
-                cv[s, b, y] = min(cost['rec'][0][(a, b, 'CHN', y)] for a in IN_T['rec'])
+    def embedded(s, b, y):                         # China's unit cost of good b, with everything inside it: the
+        if (s, b, y) not in cv:                    # cheapest process's cost plus its inputs' values, per unit made
+            pc = cost[s][0]
+            if s in nt["value_alone"]:             # recycled chemicals: the recycling stage only
+                cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] for q in made_by[s, b])
             else:
-                cv[s, b, y] = min(cost[s][0][(a, b, 'CHN', y)] + embedded(PREV[s], a, y) / RATIO[s][b]
-                                  for a in IN_T[s])
+                cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / k for g, k in RCP[q].items())
+                                  for q in made_by[s, b])
         return cv[s, b, y]
 
     def value(s, a, y):                            # the traded good's embedded value (at China's cost)
-        return embedded(s, a[1] if s == 'mine' else a[2], y)
+        return embedded(s, a[-3], y)
 
     def advalorem_cost(r):                         # tariff on the goods' embedded value
         if r not in adv["targets"]:
             return 0
         return quicksum(adv["rates"][s] * value(s, a, y) * flow[s][k, y]
-                        for s in adv["rates"] for k, a in enumerate(trade[s]) if a[3] == 'CHN' and a[4] == r
+                        for s in adv["rates"] for k, a in enumerate(trade[s]) if a[-2] == 'CHN' and a[-1] == r
                         for y in Y)
 
-    region_cost = {r: quicksum(stage_cost(s, r) for s in STAGES) + import_cost(r) for r in R}
+    region_cost = {r: quicksum(stage_cost(s, r) for s in STG) + import_cost(r) for r in R}
 
     co_cost = 0
     if cobalt:                                     # refined Co into NMC cathode, by region
@@ -512,32 +559,34 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                            + CO_MINE["cost"] / co_y * drc[r, y] + CO_SPOT * spot[r, y]
                            for r in R for y in Y)
     short_by_r = p.get("shortage_mult_region", {})
-    short_cost = quicksum(short_by_r.get(r, short_mult) * embedded('cell' if to in CELL_T else 'pack', to, y) * v
+    short_cost = quicksum(short_by_r.get(r, short_mult) * embedded(short_stage[to], to, y) * v
                           for (to, r, y), v in short.items())
     hold_cost = (quicksum(sp["hold_share"] * embedded(st, g, y) * v for (st, g, r, y), v in stock.items())
                  if stock else 0)
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
-             hold_cost=hold_cost)
+             hold_cost=hold_cost, net=nt, N=N, cons=cons)
     return obj, h
 
 
 def results(h, obj_val, want_duals=False):
     Y, R, region_cost, flow, trade, inv, act, prod, ALL, cell_bal = (h[k] for k in
         ("Y", "R", "region_cost", "flow", "trade", "inv", "act", "prod", "ALL", "cell_bal"))
+    nt, N = h["net"], h["N"]
+    cells = nt["out_t"].get('cell', [])
     out = dict(status=GRB.OPTIMAL, obj=obj_val, Y=Y, R=R,
                region_cost={r: region_cost[r].getValue() for r in R},
-               us_imports=sum(flow[s][k, y].X for s in STAGES for k, a in enumerate(trade[s])
+               us_imports=sum(flow[s][k, y].X for s in nt["stages"] for k, a in enumerate(trade[s])
                               for y in Y if a[-1] == 'US'),
                fix_int=dict(inv={k: round(v.X) for k, v in inv.items()},
                             act={k: round(v.X) for k, v in act.items()}))
     # production share by region, cell stage, final year (a compact "where it's made" summary)
     yl = max(Y)
-    cell_by_r = {r: sum(prod[('cell', a, b, r), yl].X for a in CATH_T for b in CELL_T) for r in R}
+    cell_by_r = {r: sum(prod[n, yl].X for n in N.get('cell', []) if n[-1] == r) for r in R}
     tot = sum(cell_by_r.values()) or 1.0
     out["cell_share"] = {r: v / tot for r, v in cell_by_r.items()}
-    out["short"] = {k: v.X * SHORT_GWH[k[0]] for k, v in h["short"].items() if v.X > 1e-6}   # unmet, cell GWh
+    out["short"] = {k: v.X * nt["short_gwh"].get(k[0], 1.0) for k, v in h["short"].items() if v.X > 1e-6}   # unmet, GWh
     out["beyond"] = {k: e.getValue() - c for k, (e, c) in h["over"].items() if e.getValue() - c > 1e-6}  # past IEA's path
     out["stock"] = {k: v.X for k, v in h.get("stock", {}).items() if v.X > 1e-6}   # (stage, good, region, year): held
     hc = h.get("hold_cost", 0)
@@ -546,20 +595,21 @@ def results(h, obj_val, want_duals=False):
     for (n, y), v in prod.items():
         k = (n[0], n[-1], y); out["stage_output"][k] = out["stage_output"].get(k, 0.0) + v.X
     # where US-bound cells are made over the coupled years, by chemistry
-    out["cell_prod"] = {(b, r): sum(prod[('cell', a, b, r), y].X for a in CATH_T for y in COUPLED_YEARS)
-                        for b in CELL_T for r in R}
+    yc = [y for y in COUPLED_YEARS if y in Y]
+    out["cell_prod"] = {(b, r): sum(prod[n, y].X for n in N.get('cell', []) if n[-2:] == (b, r) for y in yc)
+                        for b in cells for r in R}
     # binding pattern: which (stage, region) nodes invest anywhere, and which arcs carry flow
     out["pattern"] = frozenset([f"inv:{n[0]}:{n[-1]}" for n in ALL if any(inv[n, y].X > 0.5 for y in Y)]
-                               + [f"arc:{s}:{a[-2]}>{a[-1]}" for s in STAGES for k, a in enumerate(trade[s])
+                               + [f"arc:{s}:{a[-2]}>{a[-1]}" for s in nt["stages"] for k, a in enumerate(trade[s])
                                   if any(flow[s][k, y].X > 1e-3 for y in Y)])
     if want_duals:
-        out["cell_dual"] = {(to, y): cell_bal[to, 'US', y].Pi for to in CELL_T for y in Y}
+        out["cell_dual"] = {(to, y): cell_bal[to, 'US', y].Pi for to in cells for y in Y}
         # The price of extra US grid-cell demand: it is on the right of the cell balance AND caps the shortage
         # (short <= grid demand), so its price is the sum of both duals. They differ only where the cap binds:
         # every US grid cell of that chemistry unmet that year. See scripts/dual_diagnosis.py.
         cap = h.get("short_cap", {})
         out["cell_dual_total"] = {(to, y): cell_bal[to, 'US', y].Pi + (cap[to, 'US', y].Pi if (to, 'US', y) in cap else 0.0)
-                                  for to in CELL_T for y in Y}
+                                  for to in cells for y in Y}
     return out
 
 

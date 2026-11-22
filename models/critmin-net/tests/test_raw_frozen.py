@@ -26,7 +26,7 @@ def present():
 
 
 def test_manifest_is_not_empty():
-    assert len(listed()) >= 55, "MANIFEST.sha256 lists fewer files than the data folder was frozen with (55)"
+    assert len(listed()) >= 62, "MANIFEST.sha256 lists fewer files than the data folder was frozen with (62)"
 
 
 def test_every_listed_file_is_present_and_unchanged():

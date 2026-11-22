@@ -25,6 +25,35 @@ and policy and shock scenarios. One module: [`src/critmin_net/network.py`](src/c
 
 Every hook is off by default. With none on and her notebook's parameters, it is her model.
 
+## How the network is described (0.4.0)
+
+As sets, at the top of `network.py`, from which `build()` makes every balance, trade arc and input variable:
+
+- `MINERALS`: the mineral set. Lithium only, for now.
+- `GOODS`: (the stage that makes it, its name), e.g. `('proc', 'lce')`; `MINERAL_OF` gives each good's mineral,
+  or `None` for a product carrying several (cathode, cells, packs).
+- `PROCESSES`: a mine is (stage, ore); every other process is (stage, input, output) and makes one good.
+- `RECIPE[process]`: {input good: output per unit of that input}. Lithium's chain has one input per process,
+  at Alavi's ratios; a process with several inputs (a precursor and lithium into cathode) is a recipe with
+  several entries, so new minerals and stages are new entries here rather than new constraints.
+
+`build(..., net=...)` takes a network as data: its sets, and optionally its own years, costs and demand
+(`network.LITHIUM` documents the format). Lithium, the default, reads Alavi's tables as before.
+
+**The multi-mineral test network** (`critmin_net.battery`, PRELIMINARY): lithium, nickel, cobalt, manganese
+and graphite through mining, refining, pCAM, anode, cathode and cells, on LLNL's regions plus "Special" (the
+DRC), for 2023 and 2024. pCAM takes nickel, cobalt and manganese sulfates together; NMC cathode takes pCAM and
+lithium; cells take cathode and anode, at GREET's kg per kWh. The quantities are real and sourced
+(`src/critmin_net/data/battery_2023_2024/`): USGS mine output times each mineral's EV share (IEA), IEA refining,
+cathode and cell shares, and IEA's EV battery demand by region and chemistry; every cost is a placeholder. It
+tests the mechanism, not the world: `python -m critmin_net.battery` solves it, and the solver tests check that
+both years are supplied with nothing unmet, that every mineral is taken in exactly demand x intensity, and
+that China, which refines most lithium and cobalt but mines little lithium and no cobalt, imports ore.
+
+0.4.0 changed only how the model is written: across Alavi's parameters, the calibration and every hook, it
+builds the same Gurobi model as 0.3.0, by Gurobi's model fingerprint, and reports the same results and
+US cell prices.
+
 ## Where it came from
 
 Moved here in 0.1.0 from `critmin-energy-surrogatecoupling` (`src/surrogatecoupling/sara_net.py` at
@@ -97,8 +126,14 @@ the region that holds it and is not re-exported.
 
 ## Planned
 
-- Minerals beyond lithium's battery chain, rare earths first: mineral as a dimension of the network,
-  as LLNL's taxonomy covers many minerals.
+- The rest of the battery chain on the sets above: precursor (pCAM) from nickel, cobalt and manganese
+  sulfates; an anode (natural and synthetic graphite); nickel and manganese supply; cobalt as a byproduct of
+  copper and nickel mining, with the DRC as LLNL's "Special" region (no "Trade Embargoed" region: those
+  countries are not producers). Chemistry choice, at least as a scenario. One unit convention.
+- Recycling from retired packs by age, plus manufacturing scrap: every retired pack is shredded where it
+  retires, black mass can be traded, and hydromet returns lithium and Ni/Co/Mn products to precursor and
+  cathode. This replaces the fixed recycling demand.
+- Rare earths, as LLNL's taxonomy covers many minerals.
 
 ## Credit
 
