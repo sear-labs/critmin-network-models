@@ -64,6 +64,9 @@ is already contained output. Manufacturing scrap is lost for now; with recycling
   in `dispose`.
 - *Reserves:* extraction to date within reserves that grow (discoveries, reclassification) up to identified
   resources, also growing (`reserves`, `reserves_available`).
+- *Engine additions (0.6.0):* build lead times by stage (`lead`), recipes and co-products that change by year,
+  bounds on a route's share of its good (`route_share`), demand on any good (`extra_demand`) with `price()` reading
+  back any good's marginal cost, and a unit per good (`units`).
 - Goods are valued (for trade costs and unmet demand) at their cost made new: routes fed by waste, which is
   valued at nothing, count only where a good has no other route.
 

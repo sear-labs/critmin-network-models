@@ -40,7 +40,8 @@ def toy():
                life={EV: (('eol', 'ev'), LIFE_EV), ST: (('eol', 'storage'), LIFE_2ND), REP: (('eol', 'storage'), LIFE_2ND)},
                history={(EV, 'US', 2022): 10.0}, route_caps={REP: 0.2}, scrap={'cell': 'scrap'},
                coproducts={('refine', 'bm', 'Li'): {('refine', 'Ni'): 2.0}},   # 2 kt Ni per kt Li recovered
-               losses={'cell': 0.1}, no_trade=('use', 'eol', 'scrap'))
+               losses={'cell': 0.1}, no_trade=('use', 'eol', 'scrap'),
+               dispose=[('shred', 'bm')])   # black mass may sit unprocessed
     params = dict(regions=R, alpha={r: 1.0 for r in R}, import_coef={r: 1.0 for r in R},
                   region_share={r: 0.0 for r in R}, init_cap={p + (r,): 1e6 for p in procs for r in R},
                   ship_value_share=N.SHIP_VALUE_SHARE, shortage_mult=None, build_every=1)
@@ -155,3 +156,72 @@ def test_reserves_grow_up_to_resources():
         us.append(cum)
         assert cum <= N.reserves_available(spec, t) + 1e-6
     assert us[0] == pytest.approx(0.5)                              # binding: the US would mine more
+
+
+# ---- 0.6.0: lead times, recipes by year, route shares, extra demand and price() on any good
+
+def _status(net, params, **kw):
+    m = gp.Model(); m.Params.OutputFlag = 0
+    obj, h = N.build(m, params, net=net, **kw)
+    m.setObjective(obj, gp.GRB.MINIMIZE); m.optimize()
+    return m.Status, ({k: v.X for k, v in h["prod"].items()} if m.SolCount else {}), (m.ObjVal if m.SolCount else None)
+
+
+def test_lead_time_decides_when_capacity_can_grow():
+    """Cells start with 20 GWh of capacity (10 in each region) and demand jumps in 2025. With a one-year lead, capacity built in 2024
+    serves 2025; with a three-year lead, 2025 is still a start year, capacity is fixed, and the jump cannot be met."""
+    net, params = toy()
+    net["max_new_units"] = 10
+    for p in net["processes"]:
+        if p[0] == 'cell':
+            for r in R:
+                params["init_cap"][p + (r,)] = 10.0
+    net["demand"] = {**net["demand"], **{(('use', 'ev'), 'US', y): 35.0 for y in (2025, 2026)}}
+    st, P, _ = _status(net, params, lead={'cell': 1})
+    assert st == gp.GRB.OPTIMAL
+    assert sum(v for (n, y), v in P.items() if n[0] == 'cell' and y == 2025) > 30.0
+    st, _, _ = _status(net, params, lead={'cell': 3})
+    assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)
+    with pytest.raises(ValueError):
+        _status(net, params, lead={'cell': 1.5})
+
+
+def test_recipes_by_year():
+    """Lithium per GWh of cells halves from 2025 (10 GWh per kt, then 20): cells take half as much lithium."""
+    net, params = toy()
+    net["recipe"][('cell', 'Li', 'GWh')] = {('refine', 'Li'): {2023: 10.0, 2024: 10.0, 2025: 20.0, 2026: 20.0}}
+    N.check_net(net)
+    m = gp.Model(); m.Params.OutputFlag = 0
+    obj, h = N.build(m, params, net=net)
+    m.setObjective(obj, gp.GRB.MINIMIZE); m.optimize()
+    for y, k in ((2024, 10.0), (2025, 20.0)):
+        cells = sum(v.X for (n, yy), v in h["prod"].items() if n[0] == 'cell' and yy == y)
+        li = sum(v.X for (n, g, yy), v in h["cons"].items() if n[0] == 'cell' and yy == y)
+        assert li == pytest.approx(cells / (0.9 * k))
+
+
+def test_route_share_bounds():
+    """No recycled lithium world-wide (max 0); primary refining at least 90% of each region's lithium (min 0.9)."""
+    net, params = toy()
+    st, P, _ = _status(net, params, route_share={('refine', 'bm', 'Li'): {'max': 0.0, 'scope': 'world'}})
+    assert st == gp.GRB.OPTIMAL
+    assert sum(v for (n, y), v in P.items() if n[:3] == ('refine', 'bm', 'Li')) == pytest.approx(0.0, abs=1e-9)
+    st, P, _ = _status(net, params, route_share={('refine', 'Li', 'Li'): {'min': 0.9}})
+    for r in R:
+        for y in Y:
+            prim = P[('refine', 'Li', 'Li', r), y]
+            rec = P[('refine', 'bm', 'Li', r), y]
+            assert prim >= 0.9 * (prim + rec) - 1e-6
+    with pytest.raises(ValueError):
+        _status(net, params, route_share={('nope',): {'max': 0.5}})
+
+
+def test_extra_demand_and_price_on_any_good():
+    """A little extra EV demand in the US in 2025 raises the cost at the rate price() reads off the EV balance's
+    dual (a small step: a large one can cross into another LP basis)."""
+    net, params = toy()
+    _, _, base = _status(net, params)
+    _, _, more = _status(net, params, extra_demand={(('use', 'ev'), 'US', 2025): 0.01})
+    pr, res = N.price([('use', 'ev')], params=params, net=net, years=[2025])
+    assert pr[('use', 'ev'), 2025] == pytest.approx((more - base) / 0.01, rel=1e-6)
+    assert pr[('use', 'ev'), 2025] > 0

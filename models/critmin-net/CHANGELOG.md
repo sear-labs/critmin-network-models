@@ -3,6 +3,19 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.6.0 (2026-11-22)
+
+Engine additions from the networks outline (docs/networks-outline.md), each off by default; the lithium model is
+unchanged (12 cases, identical fingerprints, results and prices).
+- `build(lead=)` and `net["lead"]`: build lead time by stage (5, Alavi's, wherever unset).
+- Recipe and co-product coefficients may be `{year: number}`: intensities that change over time.
+- `build(route_share=)` and `net["route_share"]`: a route's share of its good's output between bounds, per region
+  or world-wide, optionally by year (technology or chemistry choice).
+- `build(extra_demand=)`: demand on any good, region and year (numbers or linear expressions), and `price()`: the
+  marginal cost of any good by year, from the balance duals after fixing the integers. `results()` with duals adds
+  `dual` and `dual_total` for every good.
+- `net["units"]`: a unit per good (the battery network has one).
+
 ## 0.5.0 (2026-11-22)
 
 - Lifecycle in the engine, all optional and none in lithium: lifetimes (`net["life"]`, `history`, `build(life=)`,

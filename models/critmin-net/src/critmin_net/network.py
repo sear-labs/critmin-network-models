@@ -17,6 +17,12 @@ Hooks (all off by default):
   * reserves           extraction to date within what is extractable, per mine node: a fixed total, or reserves
                        that grow (discoveries and reclassification) up to identified resources, also growing
                        (reserves_available)
+  * lead               build lead time by stage, years from a build decision to capacity (5, Alavi's, for all
+                       stages unless a network or the argument says otherwise)
+  * route_share        bounds on a route's share of its good's output, per region or world-wide, optionally by year
+                       (technology or chemistry choice within limits)
+  * extra_demand       demand added on any good, region and year, numbers or linear expressions (an energy model's
+                       purchases); price() reads back any good's marginal cost
   * life               product lifetimes, over a network's own (net["life"]): what a process places in a region
                        (an end use) retires there over the following years, by a lifetime distribution, into an
                        end-of-life good that repurposing and recycling take (see LIFECYCLE)
@@ -289,6 +295,12 @@ def check_net(net):
     for q, outs in net.get("coproducts", {}).items():
         if q not in net["processes"] or not set(outs) <= goods:
             raise ValueError(f"coproducts: {q!r} is not a process, or names a good that is not one")
+    for q, ins in net["recipe"].items():
+        for k in ins.values():
+            if not all(x > 0 for x in (k.values() if isinstance(k, dict) else [k])):
+                raise ValueError(f"recipe of {q!r}: coefficients must be positive numbers or {{year: number}}")
+    if set(net.get("units", {})) - goods:
+        raise ValueError("units: a key that is not a good")
     for q in net.get("route_caps", {}):
         if q not in net["processes"] or len(net["recipe"][q]) != 1:
             raise ValueError(f"route_caps: {q!r} must be a process with one input")
@@ -360,7 +372,8 @@ def data(regions=None):
 
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
-          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None, reserves=None, life=None):
+          ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None, reserves=None, life=None,
+          lead=None, route_share=None, extra_demand=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
@@ -372,6 +385,11 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     reserves: {mine node: a number (a fixed total), or {"reserve", "growth", "resources", "resource_growth"}},
       over the network's own (net["reserves"]); see reserves_available.
     life: {process: lifetime spec}, replacing the network's spec for that process (net["life"]; see LIFECYCLE).
+    lead: {stage: years}, over the network's (net["lead"]); 5 where neither says.
+    route_share: {process: {"min": share, "max": share, "scope": "region" or "world"}}, shares a number or by year,
+      over the network's (net["route_share"]).
+    extra_demand: {(good, region, year): units}, numbers or linear expressions, added to final demand.
+    Recipe and co-product coefficients may be numbers or {year: number} (intensities that change over time).
     """
     p = params or NOTEBOOK
     nt = LITHIUM if net is None else net
@@ -394,7 +412,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         D = data(p.get("regions")); R, Y = D["R"], D["Y"]
     else:
         R, Y = list(p["regions"]), list(nt["years"])
-    Y_start = [y for y in Y if y < min(Y) + 5]; Y_warm = [y for y in Y if y >= min(Y) + 5]
+    Y_start = [y for y in Y if y < min(Y) + 5]     # the calibration's ramp starts after five years
     tactics = tactics or {}; yields = yields or {}; limits = limits or {}
     LOSS = check_losses({**nt.get("losses", {}), **(losses or {})}, nt, R)
     RES = {**nt.get("reserves", {}), **(reserves or {})}
@@ -406,6 +424,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     NO_TRADE = set(nt.get("no_trade", ()))         # stages whose goods stay where they are made or retire
     ROUTE_CAP = nt.get("route_caps", {})           # {process: share}: its input <= share x that good's retirement
     COLLECT = nt.get("collect", 1.0)               # share of what retires that must be taken (repurposed or recycled)
+    LEAD = {**nt.get("lead", {}), **(lead or {})}  # {stage: years from a build decision to capacity}
+    if not all(s in STG and int(v) == v and v >= 0 for s, v in LEAD.items()):
+        raise ValueError(f"lead: stages must be the network's and years whole and >= 0, got {LEAD!r}")
+    RSHARE = {**nt.get("route_share", {}), **(route_share or {})}
+    if set(RSHARE) - set(nt["processes"]):
+        raise ValueError(f"route_share: {sorted(set(RSHARE) - set(nt['processes']))} are not processes")
+    XD = dict(extra_demand or {})                  # {(good, region, year): units} on top of final demand
 
     def loss(n, y):                                # share lost at node n in year y: node, then process, then stage
         for k in (n, n[:-1], n[0]):
@@ -443,6 +468,10 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         demand_rec = share(D["rec_demand"], REC_T)
 
     def final_demand(g, r, y):                     # a good's final demand; cells add grid storage (extra)
+        d = _final_demand(g, r, y)
+        return d + XD[g, r, y] if (g, r, y) in XD else d
+
+    def _final_demand(g, r, y):
         s, name = g
         if alavi:
             return {'cell': extra.get((name, r, y), 0.0), 'pack': demand_pack.get((name, r, y), 0.0),
@@ -502,6 +531,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         return prev - stock[st, g, r, y]
 
     cell_bal, short_cap = {}, {}
+    bal_all, short_cap_all = {}, {}                # every good's balance and shortage cap, for price()
     # unmet demand, where it is consumed: each region's grid cells (its storage, and ERCOT's) and its packs,
     # each at most that demand. A shortfall cannot become cells that are packed and shipped elsewhere.
     # Not in the last year: capacity for it serves one year, so the horizon's end would read as a shortage.
@@ -547,7 +577,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     if lo:
                         supply += lo / (1.0 - lo) * prod[n, y]   # lost, in units of the output it would have been
                 for n, k in co_in.get((g, r), []):
-                    supply += k * prod[n, y]
+                    supply += by_year(k, y) * prod[n, y]
                 use = (quicksum(flow[s][k, y] for n in makers[g, r] for k in t_out[s][n])
                        + quicksum(cons[n, g, y] for n in users[g, r]))
                 demand = final_demand(g, r, y)
@@ -555,6 +585,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 if short_stage.get(name) == s and (name, r, y) in short:   # demanded, not supplied: unmet, at a penalty
                     supply += short[name, r, y]
                     c = m.addConstr(short[name, r, y] <= demand)
+                    short_cap_all[g, r, y] = c
                     if s == 'cell': short_cap[name, r, y] = c
                 if g in eol_of:                    # what retires is taken, at least the collected share; the rest
                     m.addConstr(use <= supply)     # stays in place (in use, stored or landfilled)
@@ -563,16 +594,28 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     bal = m.addConstr(supply >= use)
                 else:
                     bal = m.addConstr(supply == use)
+                bal_all[g, r, y] = bal
                 if s == 'cell': cell_bal[name, r, y] = bal
     for n in ALL:                                  # each input in its recipe's proportion
         for g, out_per_in in RCP[n[:-1]].items():
             for y in Y:
-                m.addConstr(prod[n, y] == (1.0 - loss(n, y)) * out_per_in * cons[n, g, y])
+                m.addConstr(prod[n, y] == (1.0 - loss(n, y)) * by_year(out_per_in, y) * cons[n, g, y])
     for q, shr in ROUTE_CAP.items():               # e.g. repurposing: at most a share of what retires
         (g,) = RCP[q]
         for r in R:
             for y in Y:
                 m.addConstr(cons[q + (r,), g, y] <= by_year(shr, y) * retire[g, r, y])
+    for q, spec in RSHARE.items():                 # a route's share of its good's output, within bounds
+        g = output(q)
+        scopes = [[r] for r in R] if spec.get("scope", "region") == "region" else [list(R)]
+        for rs in scopes:
+            for y in Y:
+                mine_q = quicksum(prod[q + (r,), y] for r in rs)
+                every_q = quicksum(prod[n, y] for r in rs for n in makers[g, r])
+                if "min" in spec:
+                    m.addConstr(mine_q >= by_year(spec["min"], y) * every_q)
+                if "max" in spec:
+                    m.addConstr(mine_q <= by_year(spec["max"], y) * every_q)
     for n, spec in RES.items():                    # extraction to date within what is extractable by then
         if n not in prod_nodes:
             raise ValueError(f"reserves: {n!r} is not a node")
@@ -590,12 +633,14 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             m.addConstr(prod[n, y] <= yl * cap[n, y])
             m.addConstr(newc[n, y] <= mc * inv[n, y])
             m.addConstr(cap[n, y] <= mc * act[n, y])
-        for y in Y_warm:
-            m.addConstr(act[n, y] == act[n, y - 1] + inv[n, y - 5])
-            m.addConstr(cap[n, y] <= newc[n, y - 5] + cap[n, y - 1])
+        L = int(LEAD.get(n[0], 5))                 # years from a build decision to capacity
+        ys_n = [y for y in Y if y < min(Y) + max(L, 1)]; yw_n = [y for y in Y if y >= min(Y) + max(L, 1)]
+        for y in yw_n:
+            m.addConstr(act[n, y] == act[n, y - 1] + inv[n, y - L])
+            m.addConstr(cap[n, y] <= newc[n, y - L] + cap[n, y - 1])
         if n in fixed_cap:                         # calibration: capacity fixed (a number, or by year)
             for y in Y: m.addConstr(cap[n, y] == by_year(fixed_cap[n], y))
-        for y in Y_start:
+        for y in ys_n:
             m.addConstr(act[n, y] == nt["init_active"])
             if n not in fixed_cap:
                 m.addConstr(cap[n, y] == (nt["init_capacity"][n[0]] if init_cap is None
@@ -709,7 +754,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             elif s in nt["value_alone"]:             # recycled chemicals: the recycling stage only
                 cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] for q in made_by[s, b])
             else:
-                cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / ((1.0 - loss(q + ('CHN',), y)) * k)
+                cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / ((1.0 - loss(q + ('CHN',), y)) * by_year(k, y))
                                                                for g, k in RCP[q].items())
                                   for q in new_route[s, b])
         return cv[s, b, y]
@@ -746,7 +791,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
-             hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire)
+             hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire,
+             bal_all=bal_all, short_cap_all=short_cap_all)
     return obj, h
 
 
@@ -790,6 +836,9 @@ def results(h, obj_val, want_duals=False):
         cap = h.get("short_cap", {})
         out["cell_dual_total"] = {(to, y): cell_bal[to, 'US', y].Pi + (cap[to, 'US', y].Pi if (to, 'US', y) in cap else 0.0)
                                   for to in cells for y in Y}
+        cap_all = h.get("short_cap_all", {})
+        out["dual"] = {k: c.Pi for k, c in h.get("bal_all", {}).items()}
+        out["dual_total"] = {k: v + (cap_all[k].Pi if k in cap_all else 0.0) for k, v in out["dual"].items()}
     return out
 
 
@@ -984,6 +1033,20 @@ def us_cell_price(extra_cell_demand=None, years=None, total=False, **kw):
     key = "cell_dual_total" if total else "cell_dual"
     price = {to: float(np.mean([lp[key][to, y] for y in years])) for to in CELL_T}
     return price, base
+
+
+def price(goods, region='US', years=None, total=False, params=None, **kw):
+    """Marginal cost of one more unit of each good demanded in `region`, by year: {(good, year): price}.
+
+    Any good, any network (net=...): solve the MILP, fix its integers, re-solve the LP and read the duals of the
+    good's balance; with total=True add its shortage cap's dual, as us_cell_price does for cells. kw: build()
+    options (net, extra_demand, ...). Returns (prices, the MILP's results)."""
+    base = solve(params, **kw)
+    if "obj" not in base:
+        return None, base
+    lp = solve(params, fix_int=base["fix_int"], want_duals=True, **kw)
+    key = "dual_total" if total else "dual"
+    return {(g, y): lp[key][g, region, y] for g in goods for y in (years or lp["Y"])}, base
 
 
 def us_cell_prices(periods, extra_cell_demand=None, total=False, **kw):

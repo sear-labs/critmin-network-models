@@ -153,8 +153,10 @@ def sets(intensity, lc=None):
         add(('shred', f"scrap_{c}", f"bm_{c}"), {('scrap', f"GWh_{c}"): 1.0})
     goods = [(s, g) for s in STAGES for g in out_t[s]]
     mineral_of = {g: (g[1] if g[0] in ('mine', 'refine') else 'graphite' if g[0] == 'anode' else None) for g in goods}
+    units = {g: ('kt contained' if g[0] in ('mine', 'refine') else 'kt graphite' if g[0] == 'anode'
+                 else 'GWh' if g[0] in ('cell', 'use', 'eol') else 'GWh-equivalent') for g in goods}
     return dict(minerals=list(MINERALS), stages=list(STAGES), goods=goods, mineral_of=mineral_of, processes=procs,
-                recipe=recipe, out_t=out_t,
+                recipe=recipe, out_t=out_t, units=units,
                 max_cap={s: 1e12 for s in STAGES}, init_capacity={s: 0.0 for s in STAGES}, init_active=1,
                 max_new_units=0, short_stages=('use',), value_alone=(), short_gwh={},
                 life=life, coproducts=coprod, route_caps=caps, scrap={'cell': 'scrap'},

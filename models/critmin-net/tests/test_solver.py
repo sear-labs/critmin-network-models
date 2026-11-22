@@ -215,3 +215,16 @@ def test_battery_repurposing_within_its_share(battery_default):
     for y in B.YEARS:
         for c in B.CHEMS:
             assert r["repurposed"].get((f"ev_{c}", y), 0.0) <= B.LIFECYCLE["repurpose"] * r["retired"][f"ev_{c}", y] + 1e-6
+
+
+
+def test_battery_price_of_us_storage():
+    """price() on the battery network: the marginal cost of one more GWh of US LFP storage in 2023 is positive and
+    matches a small step in extra demand."""
+    from critmin_net import battery as B, network as N
+    net, params, kw, need = B.network(B.load())
+    g = ('use', 'storage_lfp')
+    pr, base = N.price([g], params=params, net=net, years=[2023], **kw)
+    assert pr[g, 2023] > 0
+    more = N.solve(params, net=net, extra_demand={(g, 'US', 2023): 0.01}, **kw)
+    assert pr[g, 2023] == pytest.approx((more["obj"] - base["obj"]) / 0.01, rel=1e-3)
