@@ -73,3 +73,59 @@ def test_stockpile_off_adds_nothing():
         N.build(m, N.PUBLISHED, **kw); m.update()
         sizes.append((m.NumVars, m.NumConstrs))
     assert sizes[0] == sizes[1]
+
+
+def test_the_network_sets():
+    """Lithium's chain as sets: one mineral, a good per stage output, one input per process at Alavi's ratios."""
+    from critmin_net import network as N
+    assert N.MINERALS == ['Li']
+    assert len(N.GOODS) == len(set(N.GOODS)) == sum(len(v) for v in N.OUT_T.values())
+    assert ('proc', 'lce') in N.GOODS and ('rec', 'lce') in N.GOODS          # same name, different goods
+    assert N.MINERAL_OF[('mine', 'spod')] == 'Li' and N.MINERAL_OF[('cell', 'GWh_lfp')] is None
+    for p in N.PROCESSES:
+        if p[0] == 'mine':
+            assert N.RECIPE[p] == {}
+        else:
+            assert N.RECIPE[p] == {(N.STAGE_IN[p[0]], p[1]): N.RATIO[p[0]][p[2]]}
+    N._check_sets()
+
+
+def test_every_good_has_one_balance_per_region_and_year():
+    """build() makes the balances from GOODS: one row per good, region and year (Alavi's notebook regions)."""
+    gp = pytest.importorskip("gurobipy")
+    from critmin_net import network as N
+    m = gp.Model(); m.Params.OutputFlag = 0
+    _, h = N.build(m, N.NOTEBOOK)
+    cells = [g for g in N.GOODS if g[0] == 'cell']
+    assert len(h["cell_bal"]) == len(cells) * len(h["R"]) * len(h["Y"])
+
+
+def test_battery_inputs_load_and_hang_together():
+    """The multi-mineral test network's inputs: every country has a region, demand is the world's, shares sum to
+    at most one, and every recipe input is a good. No solver."""
+    pytest.importorskip("gurobipy")
+    from critmin_net import battery as B, network as N
+    inp = B.load()
+    for y, world in ((2023, 750.0), (2024, 950.0)):
+        assert sum(v for (c, r, yy), v in inp["demand"].items() if yy == y) == pytest.approx(world)
+    tot = {}
+    for (s, key, r, y), v in inp["share"].items():
+        tot[s, key, y] = tot.get((s, key, y), 0.0) + v
+    assert all(v <= 1.0 + 1e-9 for v in tot.values()), {k: v for k, v in tot.items() if v > 1}
+    assert inp["mine"][('Co', 'SPC', 2024)] > 0              # the DRC mines cobalt, in LLNL's Special region
+    net, params, kw, need = B.network(inp)
+    N.check_net(net)
+    assert need[('Li', 2023)] > 0 and set(params["regions"]) == set(N.LLNL_REGIONS) | {'SPC'}
+
+
+
+def test_losses_are_checked():
+    """A loss names a stage, process or node with inputs, and is a share in [0, 1)."""
+    pytest.importorskip("gurobipy")
+    from critmin_net import network as N
+    nt, R = N.LITHIUM, N.LLNL_REGIONS
+    p = next(q for q in nt["processes"] if q[0] == 'cell')
+    N.check_losses({'cell': 0.1, p: {2030: 0.05}, p + ('US',): 0.0}, nt, R)
+    for bad in ({'mine': 0.1}, {'cell': 1.0}, {'cell': -0.1}, {('nope',): 0.1}, {p + ('Mars',): 0.1}):
+        with pytest.raises(ValueError):
+            N.check_losses(bad, nt, R)

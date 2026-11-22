@@ -102,3 +102,69 @@ def test_stockpile_ends_where_it_started(N):
     held = {y: r["stock"].get(key + (y,), 0.0) for y in r["Y"]}
     assert held[last] >= 50.0 - 1e-6
     assert held[last] >= held[last - 1] - 1e-6
+
+
+
+@pytest.fixture(scope="module")
+def battery():
+    from critmin_net import battery as B
+    return B, B.run(losses={})                   # no losses: every mineral taken in exactly demand x intensity
+
+
+def test_battery_network_supplies_2023_and_2024(battery):
+    """Five minerals, recipes with several inputs: the observed years are supplied from the observed capacities.
+    LFP's cathode takes battery-grade iron phosphate, made in the pCAM stage."""
+    B, r = battery
+    assert r["status"] == 2 and r["short"] == {}
+
+
+def test_battery_recipes_take_what_demand_needs(battery):
+    """Every refined mineral, and anode graphite, is taken in exactly demand x intensity; refined is mined."""
+    B, r = battery
+    for m in B.MINERALS:
+        for y in B.YEARS:
+            assert r["used"][m, y] == pytest.approx(r["need"][m, y], rel=1e-6)
+            if m != 'graphite':                  # graphite: natural (mined) plus synthetic
+                assert r["mined"][m, y] == pytest.approx(r["need"][m, y], rel=1e-6)
+                assert r["refined"][m, y] == pytest.approx(r["need"][m, y], rel=1e-6)
+    assert all(r["mined"]['graphite', y] < r["need"]['graphite', y] for y in B.YEARS)
+
+
+def test_battery_china_imports_ore_it_refines(battery):
+    """China refines most lithium and cobalt but mines little lithium and no cobalt, so ore must flow to it."""
+    B, r = battery
+    for m in ('Li', 'Co'):
+        for y in B.YEARS:
+            into = sum(v for (s, g, i, j, yy), v in r["trade"].items() if (s, g, j, yy) == ('mine', m, 'CHN', y))
+            assert into > 1.0, (m, y)
+
+
+
+def test_losses_scale_what_goes_in():
+    """A 10% loss at cells and 5% at refining: recipes take need / 0.9 and mines give refined / 0.95."""
+    from critmin_net import battery as B
+    r = B.run(losses={'cell': 0.10, 'refine': 0.05})
+    assert r["status"] == 2 and r["short"] == {}
+    for m in ('Li', 'Ni', 'Co', 'Mn'):
+        for y in B.YEARS:
+            assert r["used"][m, y] == pytest.approx(r["need"][m, y] / 0.9, rel=1e-6)
+            assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / 0.95, rel=1e-6)
+
+
+def test_losses_raise_the_lithium_model_cost():
+    """In the lithium network a cell loss costs more: more of everything upstream is made."""
+    from critmin_net import network as N
+    p = N.calibrated()
+    assert N.solve(p, losses={'cell': 0.05})["obj"] > N.solve(p)["obj"]
+
+
+def test_battery_default_losses_supply_both_years():
+    """With the published default losses the observed years are still supplied, and each mine gives what its
+    refinery takes divided by the refinery's yield."""
+    from critmin_net import battery as B
+    r = B.run()
+    assert r["status"] == 2 and r["short"] == {}
+    for m in ('Li', 'Ni', 'Co', 'Mn'):
+        for y in B.YEARS:
+            assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / (1 - B.LOSSES[('refine', m, m)]), rel=1e-6)
+            assert r["used"][m, y] > r["need"][m, y]

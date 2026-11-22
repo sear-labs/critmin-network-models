@@ -1,0 +1,51 @@
+name,context,region,basis
+United States,,US,
+China,,CHN,
+Congo (Kinshasa),,SPC,"LLNL's ""Special"" region (DRC)"
+Australia,,ALLY,US defence treaty (ANZUS); as in calibration/
+Canada,,ALLY,NATO; as in calibration/
+Portugal,,ALLY,NATO; as in calibration/
+Germany,,ALLY,NATO; as in calibration/
+Japan,,ALLY,US defence treaty; as in calibration/
+Korea,,ALLY,US defence treaty; as in calibration/
+"Korea, Republic of",,ALLY,US defence treaty
+Philippines,,ALLY,US defence treaty
+Turkey,,ALLY,NATO
+Norway,,ALLY,NATO
+Finland,,ALLY,NATO (from April 2023)
+Sweden,,ALLY,NATO (from March 2024)
+New Caledonia,,ALLY,French territory (NATO)
+Belgium and Japan combined,,ALLY,"NATO, US defence treaty"
+Europe,,ALLY,as in calibration/
+European Union,,ALLY,as in calibration/
+Other AEs,,ALLY,"advanced economies; as in calibration/"
+Argentina,,ROW,as in calibration/ (Latin America in ROW)
+Brazil,,ROW,as in calibration/ (Latin America in ROW)
+Chile,,ROW,as in calibration/ (Latin America in ROW)
+Mexico,,ROW,Latin America in ROW
+Cuba,,ROW,no Trade Embargoed region (Jones 2026-11-21)
+Namibia,,ROW,as in calibration/
+Zimbabwe,,ROW,as in calibration/
+Indonesia,,ROW,
+Madagascar,,ROW,
+Papua New Guinea,,ROW,
+Russia,,ROW,no Trade Embargoed region (Jones 2026-11-21)
+"Korea, North",,ROW,no Trade Embargoed region (Jones 2026-11-21)
+Austria,,ROW,not NATO
+India,,ROW,
+Mozambique,,ROW,
+Sri Lanka,,ROW,
+Tanzania,,ROW,
+Ukraine,,ROW,
+Vietnam,,ROW,
+Cote d'Ivoire,,ROW,
+Gabon,,ROW,
+Ghana,,ROW,
+Malaysia,,ROW,
+South Africa,,ROW,
+Other countries,,ROW,
+Rest of world,,ROW,
+Rest of World,,ROW,
+Others,,ROW,
+Other EMDEs,,ROW,"emerging and developing economies; as in calibration/"
+Rest of World,cell,ALLY,"cell capacity outside China, EU and US is mostly Japan and Korea; as in calibration/"
