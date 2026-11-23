@@ -3,6 +3,30 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.7.0 (2026-11-22)
+
+The base-materials layer (docs/networks-outline.md, section 5: Jones's decision). The lithium model is unchanged
+(12 cases, identical fingerprints, results and prices).
+- `net["base"]` and `build(base=)`: goods bought in each region at a price (a number, by year, or by region),
+  with optional regional and world ceilings, and no mines, capacity or trade behind them. They may also have
+  makers; what is bought adds to them. Valued at China's price, or at `value` if given (a good cut from a
+  larger network keeps its value there, so trade costs downstream are unchanged). `results()` reports `bought`;
+  the build handle carries `value`, the engine's valuation of any good.
+- `critmin_net.base`: USGS MCS 2025 prices (USD per tonne contained: iron ore, manganese, copper, aluminium) and
+  world output, frozen in `data/base_materials/usgs_mcs2025.csv`. Phosphate rock and steel have no contained price
+  there yet.
+- Battery network: manganese is bought (its mines, reserves and other uses are gone from the network), and
+  battery-grade iron phosphate is made from bought iron and phosphorus by mass (37% and 21%). Base prices are
+  placeholders in the network's placeholder unit, like its other costs. `network(base=)` and `run(base=)` change
+  one; `run()` reports `bought`. Every other quantity is as in 0.6.0.
+- `cut(net, goods)` and `zoom(goods, params, net=..., caps=True)`: a network cut at some goods, each bought at its
+  marginal price in the whole network (LP duals with the integers fixed), valued as there, and capped at what each
+  region got from the removed chain. Price and value alone keep the whole network's plan optimal at the same cost;
+  the caps pin the quantities where plans tie. Tests: the lithium model (calibrated, cobalt add-on) cut at lithium
+  chemicals reproduces every node's output and every build; the battery network zoomed on lithium reproduces every
+  node (costs perturbed 1% to break the placeholder costs' ties); the toy, in CI. Battery: `CUT`, `zoom(focus)`,
+  `run(focus=)`.
+
 ## 0.6.0 (2026-11-22)
 
 Engine additions from the networks outline (docs/networks-outline.md), each off by default; the lithium model is

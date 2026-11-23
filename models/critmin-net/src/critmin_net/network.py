@@ -23,6 +23,9 @@ Hooks (all off by default):
                        (technology or chemistry choice within limits)
   * extra_demand       demand added on any good, region and year, numbers or linear expressions (an energy model's
                        purchases); price() reads back any good's marginal cost
+  * base               goods bought at a price, with no chain behind them (see the base-materials notes); zoom()
+                       cuts a network at some goods and buys them at their whole-network price, value and quantity,
+                       which reproduces the whole network's plan (cut() is the cut alone)
   * life               product lifetimes, over a network's own (net["life"]): what a process places in a region
                        (an end use) retires there over the following years, by a lifetime distribution, into an
                        end-of-life good that repurposing and recycling take (see LIFECYCLE)
@@ -243,6 +246,17 @@ LITHIUM = dict(minerals=MINERALS, stages=STAGES, goods=GOODS, mineral_of=MINERAL
 #   coproducts  {process: {good: units per unit of output}}: e.g. hydrometallurgy's other metals. A good with
 #               co-product supply may leave surplus unused, as may any good in `dispose`
 #   no_trade    stages whose goods are not traded (end uses; retired products, shredded where they retire)
+#
+# Base materials, for a network that carries them (net["base"]; build(base=) replaces a good's spec for one run):
+#   base        {good: {"price": p, "cap": {region: c}, "world_cap": c}}: goods whose supply is so large that energy
+#               uses are a small, steady part of it (iron, phosphate, manganese, copper, aluminium, steel). They are
+#               bought in each region at a price, with no chain behind them: no mines, capacity or trade. p is a
+#               number, {year: number} or {region: number or {year: number}} (a region not named pays nothing
+#               extra: give every region). "cap" (per region) and "world_cap" (all regions together) are optional
+#               ceilings on what is bought, numbers or {year: number}. A base good may also have makers (recycling,
+#               say); what is bought adds to them. It is valued at China's price, as made goods are at China's cost,
+#               unless "value" (a number or {year: number}) says otherwise: a good cut from a larger network keeps
+#               the value it had there, so trade costs and penalties downstream are unchanged.
 
 
 def reserves_available(spec, t):
@@ -285,9 +299,11 @@ def retire_share(spec, age):
 def check_net(net):
     """A network's sets describe one connected network (see _check_sets). Raises ValueError."""
     goods = set(net["goods"])
-    unmade = {eol for eol, _ in net.get("life", {}).values()} | {g for g in goods if g[0] in net.get("scrap", {}).values()}
+    unmade = ({eol for eol, _ in net.get("life", {}).values()} | {g for g in goods if g[0] in net.get("scrap", {}).values()}
+              | set(net.get("base", {})))
     if {output(p) for p in net["processes"]} | unmade != goods:
-        raise ValueError("a good no process makes (and nothing retires or is scrapped into), or a process making no good")
+        raise ValueError("a good no process makes (and nothing retires, is scrapped into or is bought), or a process "
+                         "making no good")
     for q, (eol, spec) in net.get("life", {}).items():
         if q not in net["processes"] or eol not in goods:
             raise ValueError(f"life: {q!r} is not a process or {eol!r} not a good")
@@ -373,7 +389,7 @@ def data(regions=None):
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
           ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None, reserves=None, life=None,
-          lead=None, route_share=None, extra_demand=None):
+          lead=None, route_share=None, extra_demand=None, base=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
@@ -389,6 +405,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     route_share: {process: {"min": share, "max": share, "scope": "region" or "world"}}, shares a number or by year,
       over the network's (net["route_share"]).
     extra_demand: {(good, region, year): units}, numbers or linear expressions, added to final demand.
+    base: {good: spec}, replacing the network's spec for that good (net["base"]; see the base-materials notes by LITHIUM).
     Recipe and co-product coefficients may be numbers or {year: number} (intensities that change over time).
     """
     p = params or NOTEBOOK
@@ -431,6 +448,20 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     if set(RSHARE) - set(nt["processes"]):
         raise ValueError(f"route_share: {sorted(set(RSHARE) - set(nt['processes']))} are not processes")
     XD = dict(extra_demand or {})                  # {(good, region, year): units} on top of final demand
+    BASE = {**nt.get("base", {}), **(base or {})}  # {good: spec}: bought at a price, no chain behind it
+    if set(BASE) - set(GDS):
+        raise ValueError(f"base: {sorted(set(BASE) - set(GDS))} are not goods of the network")
+    for g, spec in BASE.items():
+        if "price" not in spec or set(spec) - {"price", "cap", "world_cap", "value"}:
+            raise ValueError(f"base: {g!r} needs a price, and takes only price, cap, world_cap and value")
+        if set(spec.get("cap", {})) - set(R):
+            raise ValueError(f"base: {g!r} caps regions not in the model")
+
+    def base_price(g, r, y):                       # a number, {year: p} or {region: number or {year: p}}
+        pr = BASE[g]["price"]
+        if isinstance(pr, dict) and pr and all(isinstance(k, str) for k in pr):
+            pr = pr.get(r, 0.0)
+        return float(by_year(pr, y))
 
     def loss(n, y):                                # share lost at node n in year y: node, then process, then stage
         for k in (n, n[:-1], n[0]):
@@ -511,6 +542,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         for key, v in inv.items(): v.lb = v.ub = fix_int["inv"][key]
         for key, v in act.items(): v.lb = v.ub = fix_int["act"][key]
     cons = {(n, g, y): m.addVar() for n in ALL for g in RCP[n[:-1]] for y in Y}   # input g taken by node n
+    buy = {(g, r, y): m.addVar() for g in BASE for r in R for y in Y}             # base goods bought
     sp = None if stockpile is None else {**STOCKPILE, **stockpile}
     stock = {}                                     # (stage, good, region, year): stock held at the year's end
     if sp is not None:
@@ -578,6 +610,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                         supply += lo / (1.0 - lo) * prod[n, y]   # lost, in units of the output it would have been
                 for n, k in co_in.get((g, r), []):
                     supply += by_year(k, y) * prod[n, y]
+                if g in BASE:
+                    supply += buy[g, r, y]
                 use = (quicksum(flow[s][k, y] for n in makers[g, r] for k in t_out[s][n])
                        + quicksum(cons[n, g, y] for n in users[g, r]))
                 demand = final_demand(g, r, y)
@@ -616,6 +650,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     m.addConstr(mine_q >= by_year(spec["min"], y) * every_q)
                 if "max" in spec:
                     m.addConstr(mine_q <= by_year(spec["max"], y) * every_q)
+    for g, spec in BASE.items():                   # optional ceilings on what is bought
+        for r, c in spec.get("cap", {}).items():
+            for y in Y:
+                m.addConstr(buy[g, r, y] <= by_year(c, y))
+        if "world_cap" in spec:
+            for y in Y:
+                m.addConstr(quicksum(buy[g, r, y] for r in R) <= by_year(spec["world_cap"], y))
     for n, spec in RES.items():                    # extraction to date within what is extractable by then
         if n not in prod_nodes:
             raise ValueError(f"reserves: {n!r} is not a node")
@@ -708,6 +749,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
 
     # ---- objective, exactly as in her notebook (plus the hooks)
     def stage_cost(s, r):                          # costs keyed node[1:] + (year,): (ore, region, year) for mines
+        if not N[s]:                               # a stage with no processes (base materials): nothing made
+            return 0
         pc, vc, fc = cost[s]
         ns = [n for n in N[s] if n[-1] == r]
         if s == 'mine':
@@ -737,7 +780,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     # Waste and what is made only from waste (retired products, scrap, black mass) is valued at nothing, so a route
     # fed by it (repurposing, recycling) would make its good look nearly free. A good's value is what it costs made
     # new: routes taking waste count only where a good has no other route.
-    waste = {g for g in GDS if not made_by[g]}
+    waste = {g for g in GDS if not made_by[g] and g not in BASE}
     while True:
         more = {g for g in GDS if g not in waste and made_by[g]
                 and all(RCP[q] and all(i in waste for i in RCP[q]) for q in made_by[g])}
@@ -748,8 +791,12 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
 
     def embedded(s, b, y):                         # China's unit cost of good b, with everything inside it: the
         if (s, b, y) not in cv:                    # cheapest process's cost plus its inputs' values, per unit made
-            pc = cost[s][0]
-            if not made_by[s, b]:                  # end-of-life and scrap goods: waste, valued at nothing
+            pc = cost[s][0] if made_by[s, b] else None
+            if (s, b) in BASE and "value" in BASE[s, b]:   # base goods: the value given, else China's price
+                cv[s, b, y] = float(by_year(BASE[s, b]["value"], y))
+            elif (s, b) in BASE and not made_by[s, b]:
+                cv[s, b, y] = base_price((s, b), 'CHN', y)
+            elif not made_by[s, b]:                # end-of-life and scrap goods: waste, valued at nothing
                 cv[s, b, y] = 0.0
             elif s in nt["value_alone"]:             # recycled chemicals: the recycling stage only
                 cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] for q in made_by[s, b])
@@ -757,6 +804,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 cv[s, b, y] = min(pc[q[1:] + ('CHN', y)] + sum(embedded(*g, y) / ((1.0 - loss(q + ('CHN',), y)) * by_year(k, y))
                                                                for g, k in RCP[q].items())
                                   for q in new_route[s, b])
+                if (s, b) in BASE:
+                    cv[s, b, y] = min(cv[s, b, y], base_price((s, b), 'CHN', y))   # bought where dearer to make
         return cv[s, b, y]
 
     def value(s, a, y):                            # the traded good's embedded value (at China's cost)
@@ -769,7 +818,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                         for s in adv["rates"] for k, a in enumerate(trade[s]) if a[-2] == 'CHN' and a[-1] == r
                         for y in Y)
 
-    region_cost = {r: quicksum(stage_cost(s, r) for s in STG) + import_cost(r) for r in R}
+    region_cost = {r: quicksum(stage_cost(s, r) for s in STG) + import_cost(r)
+                   + quicksum(base_price(g, r, y) * buy[g, r, y] for g in BASE for y in Y) for r in R}
 
     co_cost = 0
     if cobalt:                                     # refined Co into NMC cathode, by region
@@ -792,7 +842,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
              hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire,
-             bal_all=bal_all, short_cap_all=short_cap_all)
+             bal_all=bal_all, short_cap_all=short_cap_all, buy=buy, value=embedded)
     return obj, h
 
 
@@ -817,6 +867,7 @@ def results(h, obj_val, want_duals=False):
     out["stock"] = {k: v.X for k, v in h.get("stock", {}).items() if v.X > 1e-6}   # (stage, good, region, year): held
     hc = h.get("hold_cost", 0)
     out["hold_cost"] = hc.getValue() if hasattr(hc, "getValue") else 0.0
+    out["bought"] = {k: v.X for k, v in h.get("buy", {}).items() if v.X > 1e-9}   # (good, region, year): base goods
     out["stage_output"] = {}                       # (stage, region, year): output, every node summed
     for (n, y), v in prod.items():
         k = (n[0], n[-1], y); out["stage_output"][k] = out["stage_output"].get(k, 0.0) + v.X
@@ -1047,6 +1098,133 @@ def price(goods, region='US', years=None, total=False, params=None, **kw):
     lp = solve(params, fix_int=base["fix_int"], want_duals=True, **kw)
     key = "dual_total" if total else "dual"
     return {(g, y): lp[key][g, region, y] for g in goods for y in (years or lp["Y"])}, base
+
+
+def cut(net, goods):
+    """The network with everything upstream of `goods` removed: (net, removed processes, removed goods).
+
+    Upstream is what makes the cut goods and, in turn, what only feeds that: walking back from each cut good, a
+    process that makes it goes unless one of its inputs lies downstream of the cut (recycling, which makes refined
+    metal from black mass, stays); an input goes with its last user, and its final demand (other uses) with it.
+    The cut goods stay, with no maker but what stays: zoom() makes them base goods. No solve; the copy is new.
+    """
+    import copy
+    goods = list(goods)
+    G = set(net["goods"])
+    if set(goods) - G:
+        raise ValueError(f"cut: {sorted(set(goods) - G)} are not goods of the network")
+    P, RCP = net["processes"], net["recipe"]
+    users = {g: [q for q in P if g in RCP[q]] for g in G}
+    makers = {g: [q for q in P if output(q) == g] for g in G}
+    life, scrap, co = net.get("life", {}), net.get("scrap", {}), net.get("coproducts", {})
+
+    def after(q):                                  # the goods a process puts into the network
+        out = {output(q), *co.get(q, {})}
+        if q in life:
+            out.add(life[q][0])
+        if q[0] in scrap:
+            out.add((scrap[q[0]], q[-1]))
+        return out & G
+    down, todo = set(goods), list(goods)           # everything downstream of the cut
+    while todo:
+        for q in users[todo.pop()]:
+            for g in after(q) - down:
+                down.add(g); todo.append(g)
+    gone_p, gone_g = set(), set()
+    while True:                                    # to a fixed point: a good goes once all its users have
+        more_p = {q for g in set(goods) | gone_g for q in makers[g]
+                  if q not in gone_p and not any(i in down for i in RCP[q])}
+        more_g = {i for q in gone_p | more_p for i in RCP[q]
+                  if i not in goods and i not in gone_g and all(u in gone_p | more_p for u in users[i])
+                  and not any(j in down for mk in makers[i] for j in RCP[mk])}
+        if not more_p and not more_g:
+            break
+        gone_p |= more_p; gone_g |= more_g
+    for g in goods:
+        if not any(q in gone_p for q in makers[g]):
+            raise ValueError(f"cut: nothing upstream of {g!r} to remove")
+    for q in gone_p:
+        if q in life or set(co.get(q, {})) - gone_g - set(goods):
+            raise ValueError(f"cut: {q!r} would go, but it also puts goods downstream (a lifetime or co-products)")
+    z = copy.deepcopy(net)
+    z["processes"] = [q for q in P if q not in gone_p]
+    z["recipe"] = {q: v for q, v in z["recipe"].items() if q not in gone_p}
+    z["goods"] = [g for g in z["goods"] if g not in gone_g]
+    z["out_t"] = {s: [b for b in v if (s, b) not in gone_g] for s, v in z["out_t"].items()}
+    for k in ("mineral_of", "units", "base"):
+        if k in z:
+            z[k] = {g: v for g, v in z[k].items() if g not in gone_g}
+    z["minerals"] = [x for x in z["minerals"] if x in set(z["mineral_of"].values())]
+    for k in ("coproducts", "route_caps", "route_share"):
+        if k in z:
+            z[k] = {q: v for q, v in z[k].items() if q not in gone_p}
+    if "losses" in z:                              # keyed by stage, process or node
+        z["losses"] = {k: v for k, v in z["losses"].items() if k not in gone_p and k[:-1] not in gone_p}
+    for k in ("reserves",):                        # keyed by node
+        if k in z:
+            z[k] = {n: v for n, v in z[k].items() if n[:-1] not in gone_p}
+    for k in ("demand", "history"):                # keyed (good or process, region, year)
+        if k in z:
+            z[k] = {key: v for key, v in z[k].items() if key[0] not in gone_g and key[0] not in gone_p}
+    if "dispose" in z:
+        z["dispose"] = [g for g in z["dispose"] if g not in gone_g]
+    return z, sorted(gone_p), sorted(gone_g)
+
+
+def zoom(goods, params=None, net=None, caps=True, env=None, **kw):
+    """Zoom in: the network cut at `goods` (cut()), each cut good bought at what it is worth in the whole network.
+
+    Solve the whole network (MILP, then its LP with the integers fixed), then make each cut good a base good:
+      price  by region and year, the dual of its balance: its marginal cost in the whole network;
+      value  the whole network's valuation of it (trade costs and penalties downstream are shares of value);
+      cap    with caps=True, what each region got from the removed chain (made there, plus imports, less exports).
+    Price and value reproduce the whole network's cost and keep its plan optimal in the zoomed one; at exactly
+    the marginal price a buyer is indifferent to how much it buys, so where plans tie, the caps pin the quantities.
+    With all three the zoomed network reproduces the whole one's plan (tested on the lithium network as the
+    working repository runs it and on the battery network: tests/test_solver.py). The prices hold for the case
+    they came from: a change near the cut (a tariff, a demand shock) moves them, so check such a case against
+    the whole network.
+
+    kw: build() options, for both solves; solve the zoomed network with the same ones (leaving out any that name
+    a removed process or good). Returns (zoomed net, info): info has the removed processes and goods, each cut
+    good's price, value and cap, and the whole network's LP results.
+    """
+    goods = list(goods)
+    nt = LITHIUM if net is None else net
+    m = gp.Model(env=env); m.Params.OutputFlag = 0
+    obj, h = build(m, params, net=nt, **kw)
+    m.setObjective(obj, GRB.MINIMIZE); m.optimize()
+    if m.SolCount == 0:
+        raise RuntimeError(f"zoom: the whole network did not solve (status {m.Status})")
+    fix = dict(inv={k: round(v.X) for k, v in h["inv"].items()}, act={k: round(v.X) for k, v in h["act"].items()})
+    lp = gp.Model(env=env); lp.Params.OutputFlag = 0
+    obj, h = build(lp, params, net=nt, **{**kw, "fix_int": fix})
+    lp.setObjective(obj, GRB.MINIMIZE); lp.optimize()
+    if lp.Status != GRB.OPTIMAL:
+        raise RuntimeError(f"zoom: the whole network's LP did not solve (status {lp.Status})")
+    z, gone_p, gone_g = cut(nt, goods)
+    Y, R, gp_ = h["Y"], h["R"], set(gone_p)
+    got = {(g, r, y): 0.0 for g in goods for r in R for y in Y}
+    for n in h["ALL"]:                             # what each region got from the removed chain
+        if n[:-1] in gp_ and output(n[:-1]) in goods:
+            for y in Y:
+                got[output(n[:-1]), n[-1], y] += h["prod"][n, y].X
+    for s, arcs in h["trade"].items():
+        for k, a in enumerate(arcs):
+            if a[:-2] in gp_ and output(a[:-2]) in goods:
+                for y in Y:
+                    x = h["flow"][s][k, y].X
+                    got[output(a[:-2]), a[-1], y] += x; got[output(a[:-2]), a[-2], y] -= x
+    info = dict(processes=gone_p, goods=gone_g, price={}, value={}, cap={}, whole=results(h, lp.ObjVal))
+    z.setdefault("base", {})
+    for g in goods:
+        info["price"][g] = {r: {y: h["bal_all"][g, r, y].Pi for y in Y} for r in R}
+        info["value"][g] = {y: h["value"](*g, y) for y in Y}
+        info["cap"][g] = {r: {y: max(got[g, r, y], 0.0) for y in Y} for r in R}
+        z["base"][g] = {"price": info["price"][g], "value": info["value"][g]}
+        if caps:
+            z["base"][g]["cap"] = info["cap"][g]
+    return z, info
 
 
 def us_cell_prices(periods, extra_cell_demand=None, total=False, **kw):

@@ -67,23 +67,37 @@ is already contained output. Manufacturing scrap is lost for now; with recycling
 - *Engine additions (0.6.0):* build lead times by stage (`lead`), recipes and co-products that change by year,
   bounds on a route's share of its good (`route_share`), demand on any good (`extra_demand`) with `price()` reading
   back any good's marginal cost, and a unit per good (`units`).
+- *Base materials (0.7.0):* goods whose supply dwarfs energy uses (iron, phosphorus, manganese, copper,
+  aluminium, steel) are bought in each region at a price, with no chain behind them (`base`: a price, optional
+  regional and world ceilings; `build(base=)` changes one for a run). `critmin_net.base` holds their USGS prices
+  and world output, shared by every network.
+- *Zoom (0.7.0):* `zoom(goods, params, net=...)` solves the whole network, then cuts it at `goods` (`cut()`
+  removes what makes them and what only feeds that; recycling stays) and buys each cut good at what it is worth in
+  the whole network: its marginal price by region and year, the whole network's value for it, and what each region
+  got (as a cap). The zoomed network reproduces the whole one's plan: tested on the lithium model as the working
+  repository runs it (cut at lithium chemicals; every node and build the same) and on the battery network zoomed
+  on lithium. One model, studied at any scale: the prices hold for the case they came from, so check a large change
+  near the cut against the whole network.
 - Goods are valued (for trade costs and unmet demand) at their cost made new: routes fed by waste, which is
   valued at nothing, count only where a good has no other route.
 
 Every stage is pulled only by the stage after it; final demand may sit on any good.
 
 **The battery test network** (`critmin_net.battery`, PRELIMINARY): lithium, nickel, cobalt, manganese and
-graphite through mining, refining, precursor (pCAM; battery-grade iron phosphate for LFP, with no mined input),
+graphite through mining, refining, precursor (pCAM; battery-grade iron phosphate for LFP, from bought iron and
+phosphorus),
 anode, cathode and cells into every lithium-ion end use (EVs, stationary storage, portable electronics, other),
 on LLNL's regions plus "Special" (the DRC), for 2023 and 2024. What is placed retires by age; up to a share of
 retired EV packs is repurposed as storage (5% by default, low on purpose); everything else retired, and the cells'
 manufacturing scrap, is shredded where it is, into black mass that can be traded and is recycled
 (hydrometallurgy) into refined metals. Mines have their whole USGS output, within reserves growing at their
 2015-2025 rate to resources; the minerals' other uses are demand where they leave the battery chain (refined
-lithium, nickel and cobalt; mined manganese and natural graphite). The quantities are sourced
+lithium, nickel and cobalt; mined natural graphite). Manganese, iron and phosphorus are base materials, bought at a
+price (a placeholder, like every cost here). The quantities are sourced
 (`src/critmin_net/data/battery_2023_2024/`, one row per number); losses (`LOSSES`) and lifecycle (`LIFECYCLE`)
 defaults are chosen from published tables there, and every cost is a placeholder. `python -m critmin_net.battery`
-solves it; `run(life=..., repurpose=..., collect=..., losses=...)` changes a default for one run. With the
+solves it; `run(life=..., repurpose=..., collect=..., losses=..., base=...)` changes a default for one run, and
+`run(focus=['Li'])` zooms in on some minerals (`zoom()`: the others bought at their battery-grade good, `CUT`). With the
 published EV lifetimes (Xu et al. 2020: most packs last 15-20 years) almost no EV packs retire in 2023-2024, so
 manufacturing scrap and electronics are most of the recycling feed; an 8-year life, the older assumption,
 retires 100 to 200 times more.
@@ -163,6 +177,9 @@ and `hold_cost`. Drawn stock is not production, so under rules of origin (`no_tr
 the region that holds it and is not re-exported.
 
 ## Planned
+
+- Base materials still to source: phosphorus (USGS gives no grade for phosphate rock's price) and steel (USGS gives
+  only a price index). Copper and aluminium in cells (foil, casings) once their intensities are sourced.
 
 - The lithium network on the battery network's structure: its fixed recycling demand replaced by retirement,
   repurposing and recycling. Cobalt as a co-product of copper and nickel mining. Chemistry choice, at least as a

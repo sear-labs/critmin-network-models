@@ -153,6 +153,12 @@ demand, which belongs to the energy model, not to this one.
 
 ### 3.8 A shared base-materials layer?
 
+*Zooming (0.7.0, `zoom()`): any network can be cut at some goods and run with them bought at their whole-network
+prices, values and quantities; it then reproduces the whole network's plan. So a study of one mineral uses the full
+network with the others fixed, rather than a separate model.*
+
+*Built in 0.7.0 (`net["base"]`, `critmin_net.base`); the battery network buys manganese, iron and phosphorus.*
+
 Copper, aluminium, steel and nickel run through almost every network, and most of their demand is outside
 energy. One option is a small base-materials network that the others draw on. Their other uses would be final
 demand there, as the battery network now does for lithium's. That way, combining networks shows competition for

@@ -225,3 +225,112 @@ def test_extra_demand_and_price_on_any_good():
     pr, res = N.price([('use', 'ev')], params=params, net=net, years=[2025])
     assert pr[('use', 'ev'), 2025] == pytest.approx((more - base) / 0.01, rel=1e-6)
     assert pr[('use', 'ev'), 2025] > 0
+
+
+# ---- base materials: goods bought at a price, no chain behind them
+
+CU = ('base', 'Cu')
+
+
+def toy_base(price=None, **spec):
+    """The toy with copper in cells (20 GWh per kt), bought at 3 in the US and 2 in China."""
+    net, params = toy()
+    net["stages"] = net["stages"] + ['base']
+    net["out_t"] = {**net["out_t"], 'base': ['Cu']}
+    net["goods"] = net["goods"] + [CU]
+    net["mineral_of"] = {**net["mineral_of"], CU: None}
+    net["recipe"][('cell', 'Li', 'GWh')] = {('refine', 'Li'): 10.0, CU: 20.0}
+    net["base"] = {CU: {"price": price or {'US': 3.0, 'CHN': 2.0}, **spec}}
+    return net, params
+
+
+def _solve_h(net, params, **kw):
+    m = gp.Model(); m.Params.OutputFlag = 0
+    obj, h = N.build(m, params, net=net, **kw)
+    m.setObjective(obj, gp.GRB.MINIMIZE); m.optimize()
+    return m, h
+
+
+def test_base_goods_are_bought_where_they_are_used():
+    """Every kt of copper the cells take in a region is bought there, at that region's price."""
+    net, params = toy_base()
+    N.check_net(net)
+    m, h = _solve_h(net, params)
+    assert m.Status == gp.GRB.OPTIMAL
+    for r in R:
+        for y in Y:
+            took = sum(v.X for (n, g, yy), v in h["cons"].items() if g == CU and n[-1] == r and yy == y)
+            assert h["buy"][CU, r, y].X == pytest.approx(took)
+    assert sum(v.X for v in h["buy"].values()) > 0
+    paid = sum({'US': 3.0, 'CHN': 2.0}[r] * h["buy"][CU, r, y].X for r in R for y in Y)
+    assert sum(e.getValue() for e in h["region_cost"].values()) >= paid
+
+
+def test_base_price_is_the_marginal_cost_and_caps_bind():
+    """Uncapped, one more kt of copper demanded costs its price there; a regional cap of 0 moves cells to China; a
+    world cap below what the cells need is infeasible (base goods have no shortage)."""
+    net, params = toy_base()
+    pr, _ = N.price([CU], region='US', params=params, net=net, years=[2024])
+    assert pr[CU, 2024] == pytest.approx(3.0)
+    pr, _ = N.price([CU], region='CHN', params=params, net=net, years=[2024])
+    assert pr[CU, 2024] == pytest.approx(2.0)
+    net, params = toy_base(cap={'US': 0.0})
+    m, h = _solve_h(net, params)
+    assert m.Status == gp.GRB.OPTIMAL
+    assert sum(h["buy"][CU, 'US', y].X for y in Y) == pytest.approx(0.0, abs=1e-9)
+    assert sum(v.X for (n, y), v in h["prod"].items() if n[0] == 'cell' and n[-1] == 'CHN') > 0
+    net, params = toy_base(world_cap=0.1)
+    m, _ = _solve_h(net, params)
+    assert m.Status in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)
+
+
+def test_base_override_and_checks():
+    """build(base=) replaces a good's spec for one run (a price by year here); bad specs are refused."""
+    net, params = toy_base()
+    m1, _ = _solve_h(net, params)
+    m2, h2 = _solve_h(net, params, base={CU: {"price": {'US': {y: 30.0 for y in Y}, 'CHN': {y: 20.0 for y in Y}}}})
+    assert m2.ObjVal > m1.ObjVal
+    with pytest.raises(ValueError):
+        _solve_h(net, params, base={('base', 'Al'): {"price": 1.0}})
+    with pytest.raises(ValueError):
+        _solve_h(net, params, base={CU: {"cost": 1.0}})
+    del net["base"]
+    with pytest.raises(ValueError):
+        N.check_net(net)               # copper is now a good nothing makes or supplies
+
+
+# ---- zoom: cut a network at some goods and buy them at what they are worth in the whole network
+
+LI = ('refine', 'Li')
+
+
+def test_cut_removes_what_only_feeds_the_cut():
+    """Cutting the toy at refined lithium removes lithium's refinery and mines, and keeps recycling (it makes refined
+    lithium from black mass, which lies downstream of the cut) and nickel, which the cut does not touch."""
+    net, _ = toy()
+    z, procs, goods = N.cut(net, [LI])
+    assert procs == [('mine', 'Li'), ('refine', 'Li', 'Li')] and goods == [('mine', 'Li')]
+    assert ('refine', 'bm', 'Li') in z["processes"] and ('refine', 'Ni', 'Ni') in z["processes"]
+    assert ('mine', 'Li') not in z["goods"] and LI in z["goods"] and net["processes"] != z["processes"]
+    assert N.cut(net, [('mine', 'Li')])[1] == [('mine', 'Li')]     # cut at the ore: buy it, keep the refinery
+    with pytest.raises(ValueError):
+        N.cut(net, [('eol', 'ev')])                # nothing makes it (it retires): nothing upstream to remove
+    with pytest.raises(ValueError):
+        N.cut(net, [('refine', 'Cu')])             # not a good
+
+
+def test_zoom_reproduces_the_whole_network():
+    """Zoomed at refined lithium (price, value and quantities from the whole network), the toy makes and ships what
+    the whole toy does, node by node."""
+    net, params = toy()
+    z, info = N.zoom([LI], params, net=net)
+    assert info["processes"] == [('mine', 'Li'), ('refine', 'Li', 'Li')]
+    N.check_net(z)
+    m0, h0 = _solve_h(net, params)
+    m1, h1 = _solve_h(z, params)
+    assert m1.Status == gp.GRB.OPTIMAL
+    for (n, y), v in h1["prod"].items():
+        assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
+    bought = {(r, y): h1["buy"][LI, r, y].X for r in R for y in Y}
+    assert sum(bought.values()) > 0
+    assert all(bought[r, y] <= info["cap"][LI][r][y] + 1e-9 for r in R for y in Y)

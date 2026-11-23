@@ -154,16 +154,16 @@ def test_battery_china_imports_ore_it_refines(battery):
 
 
 def test_losses_scale_what_goes_in():
-    """A 10% loss at cells and 5% at refining: recipes take need / 0.9 and lithium, nickel and cobalt mines give
-    primary refined / 0.95 (manganese's mines also serve its other uses)."""
+    """A 10% loss at cells and 5% at refining: recipes take need / 0.9, lithium, nickel and cobalt mines give
+    primary refined / 0.95, and manganese bought (a base material) is primary refined / 0.95 too."""
     from critmin_net import battery as B
     r = B.run(losses={'cell': 0.10, 'refine': 0.05}, repurpose=0.0)
     assert r["status"] == 2 and r["short"] == {}
     for m in ('Li', 'Ni', 'Co', 'Mn'):
         for y in B.YEARS:
             assert r["used"][m, y] == pytest.approx(r["need"][m, y] / 0.9, rel=1e-6)
-            if m != 'Mn':
-                assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / 0.95, rel=1e-6)
+            src = r["bought"] if m == 'Mn' else r["mined"]
+            assert src[m, y] == pytest.approx(r["refined"][m, y] / 0.95, rel=1e-6)
 
 
 def test_losses_raise_the_lithium_model_cost():
@@ -174,13 +174,13 @@ def test_losses_raise_the_lithium_model_cost():
 
 
 def test_battery_default_losses(battery_default):
-    """With the published default losses each lithium, nickel and cobalt mine gives what its refinery takes divided
-    by the refinery's yield, and the battery chain takes more than demand x intensity."""
+    """With the published default losses each mine (and manganese bought) gives what its refinery takes divided by
+    the refinery's yield, and the battery chain takes more than demand x intensity."""
     B, inp, r = battery_default
     for m in ('Li', 'Ni', 'Co', 'Mn'):
         for y in B.YEARS:
-            if m != 'Mn':
-                assert r["mined"][m, y] == pytest.approx(r["refined"][m, y] / (1 - B.LOSSES[('refine', m, m)]), rel=1e-6)
+            src = r["bought"] if m == 'Mn' else r["mined"]
+            assert src[m, y] == pytest.approx(r["refined"][m, y] / (1 - B.LOSSES[('refine', m, m)]), rel=1e-6)
             assert r["used"][m, y] > r["need"][m, y]
 
 
@@ -228,3 +228,94 @@ def test_battery_price_of_us_storage():
     assert pr[g, 2023] > 0
     more = N.solve(params, net=net, extra_demand={(g, 'US', 2023): 0.01}, **kw)
     assert pr[g, 2023] == pytest.approx((more["obj"] - base["obj"]) / 0.01, rel=1e-3)
+
+
+def test_battery_base_materials(battery_default):
+    """Manganese, iron and phosphorus are bought, not mined: iron and phosphorus exactly what LFP's iron phosphate
+    takes (37% and 21% of its mass), and manganese a sliver of what the world mines (USGS)."""
+    from critmin_net import base
+    B, inp, r = battery_default
+    assert not any(m == 'Mn' for (m, y) in r["mined"])
+    w = base.world()
+    for y in B.YEARS:
+        lfp = sum(v for (u, c, rg, yy), v in inp["demand"].items() if c == 'lfp' and yy == y)
+        fepo4 = B.FEPO4_PER_LI * inp["intensity"]['lfp']['Li']           # kg per kWh, so kt per GWh
+        for x in ('Fe', 'P'):
+            assert r["bought"][x, y] > lfp * fepo4 * B.IN_FEPO4[x]        # cell scrap means more than demand
+        assert r["bought"]['Fe', y] / r["bought"]['P', y] == pytest.approx(B.IN_FEPO4['Fe'] / B.IN_FEPO4['P'])
+        assert r["bought"]['Mn', y] < 0.01 * w['manganese', y]
+
+
+def test_battery_base_price_override():
+    """A dearer manganese raises the cost and nothing else changes in what is made."""
+    from critmin_net import battery as B
+    a = B.run(repurpose=0.0)
+    b = B.run(repurpose=0.0, base={'Mn': {"price": 10.0}})
+    assert b["obj"] > a["obj"]
+    assert b["bought"]['Mn', 2024] == pytest.approx(a["bought"]['Mn', 2024], rel=1e-6)
+    with pytest.raises(ValueError):
+        B.run(base={'Cu': {"price": 1.0}})
+
+
+# ---- zoom (0.7.0): the network cut at some goods, bought at what they are worth in the whole network
+
+def _solve_h(N, net, params, **kw):
+    m = gp.Model(); m.Params.OutputFlag = 0
+    obj, h = N.build(m, params, net=net, **kw)
+    m.setObjective(obj, gp.GRB.MINIMIZE); m.optimize()
+    assert m.Status == gp.GRB.OPTIMAL
+    return m, h
+
+
+def test_zoom_reproduces_the_lithium_model(N):
+    """The lithium model as the working repository runs it (calibrated map, cobalt add-on: a MILP with builds), cut at
+    lithium chemicals: mines and chemical refining bought at their whole-network prices. Every remaining node makes
+    what it makes in the whole model, and builds the same plants, solving the zoomed MILP afresh."""
+    cal = N.calibrated()
+    z, info = N.zoom([('proc', b) for b in N.PROC_T], cal, cobalt=True)
+    assert {q[0] for q in info["processes"]} == {'mine', 'proc'}
+    m0, h0 = _solve_h(N, N.LITHIUM, cal, cobalt=True)
+    m1, h1 = _solve_h(N, z, cal, cobalt=True)
+    tot = sum(v.X for v in h0["prod"].values())
+    for (n, y), v in h1["prod"].items():
+        assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6 * tot)
+        assert round(h1["inv"][n, y].X) == round(h0["inv"][n, y].X)
+
+
+def test_zoom_battery_on_lithium():
+    """The battery network zoomed on lithium: nickel, cobalt, manganese and graphite bought at their whole-network
+    prices. Its placeholder costs tie many plans, so they are perturbed by up to 1% (the same in both) to make the
+    plan unique; then every remaining node matches, lithium's mines and refineries included."""
+    import random
+    from critmin_net import battery as B, network as N
+    net, params, bkw, _ = B.network(B.load())
+    rng = random.Random(1)
+    for pc, _, _ in net["cost"].values():
+        for k in pc:
+            pc[k] *= 1 + 0.01 * (2 * rng.random() - 1)
+    z, info = N.zoom([B.CUT[m] for m in ('Ni', 'Co', 'Mn', 'graphite')], params, net=net, **bkw)
+    assert ('mine', 'Li') not in [q[:2] for q in info["processes"]]
+    m0, h0 = _solve_h(N, net, params, **bkw)
+    m1, h1 = _solve_h(N, z, params, **bkw)
+    for (n, y), v in h1["prod"].items():
+        assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
+    li = [k for k in h1["prod"] if k[0][:2] in (('mine', 'Li'), ('refine', 'Li'))]
+    assert li and sum(h1["prod"][k].X for k in li) > 0
+    # price and value alone (no caps): the whole network's plan is still optimal, so the cost is the same
+    z2, _ = N.zoom([B.CUT[m] for m in ('Ni', 'Co', 'Mn', 'graphite')], params, net=net, caps=False, **bkw)
+    m2, _ = _solve_h(N, z2, params, **bkw)
+    assert m2.ObjVal == pytest.approx(m1.ObjVal, rel=1e-9)
+
+
+def test_battery_run_with_focus():
+    """run(focus=...) zooms: only the focus minerals are mined, the others' battery-grade goods are bought, and the
+    lithium mined each year is the whole network's (it may sit in other regions where plans tie)."""
+    from critmin_net import battery as B
+    whole, li = B.run(), B.run(focus=['Li'])
+    assert li["status"] == 2 and li["short"] == {}
+    assert {m for m, _ in li["mined"]} == {'Li'}
+    assert {'Ni', 'Co', 'Mn', 'anode'} <= {m for m, _ in li["bought"]}
+    for y in B.YEARS:
+        assert li["mined"]['Li', y] == pytest.approx(whole["mined"]['Li', y], rel=1e-6)
+    with pytest.raises(ValueError):
+        B.zoom(['Li', 'Ni', 'Co', 'Mn', 'graphite'])
