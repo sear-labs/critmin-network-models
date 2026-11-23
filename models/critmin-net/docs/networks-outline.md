@@ -39,7 +39,7 @@ These come up in more than one network, so they belong in the engine, not in eac
 
 Still to do:
 - a projection horizon (about 2023-2040) with capacity built, not fixed;
-- real costs;
+- real costs (*sourced in 0.8.0, `data/battery_costs/`; PRELIMINARY: several are price spreads or single projects*);
 - cobalt as a co-product of copper and nickel mining;
 - recycling capacity by region;
 - chemistry choice as bounded route shares;

@@ -93,9 +93,12 @@ manufacturing scrap, is shredded where it is, into black mass that can be traded
 (hydrometallurgy) into refined metals. Mines have their whole USGS output, within reserves growing at their
 2015-2025 rate to resources; the minerals' other uses are demand where they leave the battery chain (refined
 lithium, nickel and cobalt; mined natural graphite). Manganese, iron and phosphorus are base materials, bought at a
-price (a placeholder, like every cost here). The quantities are sourced
+price (USGS's for manganese and iron). The quantities are sourced
 (`src/critmin_net/data/battery_2023_2024/`, one row per number); losses (`LOSSES`) and lifecycle (`LIFECYCLE`)
-defaults are chosen from published tables there, and every cost is a placeholder. `python -m critmin_net.battery`
+defaults are chosen from published tables there. Costs are sourced too (0.8.0; `src/critmin_net/data/battery_costs/`,
+`costs()`): each stage's own cost per unit made, by region, in USD per kg or kWh (so the objective is in million
+USD), from company reports, feasibility studies, the Stanford GSB cost model, IEA and others; PRELIMINARY, since
+several are price spreads or single projects (`selected.csv` says which, and how each was derived). `python -m critmin_net.battery`
 solves it; `run(life=..., repurpose=..., collect=..., losses=..., base=...)` changes a default for one run, and
 `run(focus=['Li'])` zooms in on some minerals (`zoom()`: the others bought at their battery-grade good, `CUT`). With the
 published EV lifetimes (Xu et al. 2020: most packs last 15-20 years) almost no EV packs retire in 2023-2024, so

@@ -278,14 +278,17 @@ def test_zoom_reproduces_the_lithium_model(N):
     m1, h1 = _solve_h(N, z, cal, cobalt=True)
     tot = sum(v.X for v in h0["prod"].values())
     for (n, y), v in h1["prod"].items():
+        if n[:-1] in z["trade_only"]:                  # the cut goods' removed makers, kept as trade routes
+            continue
         assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6 * tot)
         assert round(h1["inv"][n, y].X) == round(h0["inv"][n, y].X)
 
 
 def test_zoom_battery_on_lithium():
     """The battery network zoomed on lithium: nickel, cobalt, manganese and graphite bought at their whole-network
-    prices. Its placeholder costs tie many plans, so they are perturbed by up to 1% (the same in both) to make the
-    plan unique; then every remaining node matches, lithium's mines and refineries included."""
+    prices. Regions that share a cost tie (the DRC is priced at China's), so costs are perturbed by up to 1% (the
+    same in both) to make the plan unique; then every remaining node matches, lithium's mines and refineries
+    included."""
     import random
     from critmin_net import battery as B, network as N
     net, params, bkw, _ = B.network(B.load())
@@ -298,7 +301,8 @@ def test_zoom_battery_on_lithium():
     m0, h0 = _solve_h(N, net, params, **bkw)
     m1, h1 = _solve_h(N, z, params, **bkw)
     for (n, y), v in h1["prod"].items():
-        assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
+        if n[:-1] not in z["trade_only"]:              # the cut goods' removed makers, kept as trade routes
+            assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
     li = [k for k in h1["prod"] if k[0][:2] in (('mine', 'Li'), ('refine', 'Li'))]
     assert li and sum(h1["prod"][k].X for k in li) > 0
     # price and value alone (no caps): the whole network's plan is still optimal, so the cost is the same

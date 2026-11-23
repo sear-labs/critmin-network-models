@@ -246,6 +246,8 @@ LITHIUM = dict(minerals=MINERALS, stages=STAGES, goods=GOODS, mineral_of=MINERAL
 #   coproducts  {process: {good: units per unit of output}}: e.g. hydrometallurgy's other metals. A good with
 #               co-product supply may leave surplus unused, as may any good in `dispose`
 #   no_trade    stages whose goods are not traded (end uses; retired products, shredded where they retire)
+#   trade_only  processes kept only for their trade routes, with no recipe: they make nothing. A good is traded on
+#               its makers' arcs, so zoom() keeps a cut good's removed makers this way and the good moves as before
 #
 # Base materials, for a network that carries them (net["base"]; build(base=) replaces a good's spec for one run):
 #   base        {good: {"price": p, "cap": {region: c}, "world_cap": c}}: goods whose supply is so large that energy
@@ -322,6 +324,9 @@ def check_net(net):
             raise ValueError(f"route_caps: {q!r} must be a process with one input")
     if not all(g in goods for p in net["processes"] for g in net["recipe"][p]):
         raise ValueError("a recipe input that is not a good")
+    for q in net.get("trade_only", ()):
+        if q not in net["processes"] or net["recipe"][q]:
+            raise ValueError(f"trade_only: {q!r} must be a process with no recipe")
     if set(net["mineral_of"].values()) - {None} != set(net["minerals"]):
         raise ValueError("minerals and mineral_of disagree")
     if [g for g in net["goods"]] != [(st, n) for st in net["stages"] for n in net["out_t"][st]]:
@@ -439,6 +444,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     COPROD = nt.get("coproducts", {})              # {process: {good: units per unit of the process's output}}
     SCRAP = nt.get("scrap", {})                    # {stage: scrap stage}: what a stage loses becomes scrap there
     NO_TRADE = set(nt.get("no_trade", ()))         # stages whose goods stay where they are made or retire
+    TRADE_ONLY = set(nt.get("trade_only", ()))     # processes kept for their trade routes only (zoom())
     ROUTE_CAP = nt.get("route_caps", {})           # {process: share}: its input <= share x that good's retirement
     COLLECT = nt.get("collect", 1.0)               # share of what retires that must be taken (repurposed or recycled)
     LEAD = {**nt.get("lead", {}), **(lead or {})}  # {stage: years from a build decision to capacity}
@@ -529,6 +535,9 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     vt = GRB.CONTINUOUS if fix_int is not None else GRB.INTEGER
     prod = {(n, y): m.addVar() for n in ALL for y in Y}
     prod_nodes = set(ALL)
+    for (n, y), v in prod.items():                 # trade-only processes make nothing
+        if n[:-1] in TRADE_ONLY:
+            v.ub = 0.0
     cap = {(n, y): m.addVar() for n in ALL for y in Y}
     newc = {(n, y): m.addVar() for n in ALL for y in Y}
     inv = {(n, y): m.addVar(vtype=vt) for n in ALL for y in Y}
@@ -734,13 +743,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 for y in Y:
                     if y >= y_from: flow[s][k, y].ub = 0.0
     if no_transship:                               # calibration: exports of a good <= own production of it
-        for s in STG:
+        for s in STG:                              # (a base good: production plus what the region buys)
             for r in R:
                 for b in OUTT[s]:
                     src = [n for n in N[s] if n[-1] == r and n[-2] == b]
                     for y in Y:
-                        m.addConstr(quicksum(flow[s][k, y] for n in src for k in t_out[s][n])
-                                    <= quicksum(prod[n, y] for n in src))
+                        own = quicksum(prod[n, y] for n in src)
+                        if (s, b) in BASE:
+                            own += buy[(s, b), r, y]
+                        m.addConstr(quicksum(flow[s][k, y] for n in src for k in t_out[s][n]) <= own)
     for s, q in tactics.get("quota", {}).items():   # {stage: units per year, each target}
         for j in targets:
             for y in Y:
@@ -1106,7 +1117,10 @@ def cut(net, goods):
     Upstream is what makes the cut goods and, in turn, what only feeds that: walking back from each cut good, a
     process that makes it goes unless one of its inputs lies downstream of the cut (recycling, which makes refined
     metal from black mass, stays); an input goes with its last user, and its final demand (other uses) with it.
-    The cut goods stay, with no maker but what stays: zoom() makes them base goods. No solve; the copy is new.
+    The cut goods stay, with no maker but what stays: zoom() makes them base goods. Their removed makers stay as
+    trade-only processes (no recipe, nothing made: net["trade_only"]), since a good is traded on its makers' arcs:
+    without them a cut good with no other maker, or a co-product such as recycled cobalt, could not leave the
+    region it is in. "removed processes" lists them too. No solve; the copy is new.
     """
     import copy
     goods = list(goods)
@@ -1147,8 +1161,10 @@ def cut(net, goods):
         if q in life or set(co.get(q, {})) - gone_g - set(goods):
             raise ValueError(f"cut: {q!r} would go, but it also puts goods downstream (a lifetime or co-products)")
     z = copy.deepcopy(net)
-    z["processes"] = [q for q in P if q not in gone_p]
-    z["recipe"] = {q: v for q, v in z["recipe"].items() if q not in gone_p}
+    carry = {q for q in gone_p if output(q) in goods}  # kept for their trade routes
+    z["processes"] = [q for q in P if q not in gone_p or q in carry]
+    z["recipe"] = {q: ({} if q in carry else v) for q, v in z["recipe"].items() if q not in gone_p or q in carry}
+    z["trade_only"] = sorted(set(z.get("trade_only", ())) | carry)
     z["goods"] = [g for g in z["goods"] if g not in gone_g]
     z["out_t"] = {s: [b for b in v if (s, b) not in gone_g] for s, v in z["out_t"].items()}
     for k in ("mineral_of", "units", "base"):
@@ -1177,7 +1193,8 @@ def zoom(goods, params=None, net=None, caps=True, env=None, **kw):
     Solve the whole network (MILP, then its LP with the integers fixed), then make each cut good a base good:
       price  by region and year, the dual of its balance: its marginal cost in the whole network;
       value  the whole network's valuation of it (trade costs and penalties downstream are shares of value);
-      cap    with caps=True, what each region got from the removed chain (made there, plus imports, less exports).
+      cap    with caps=True, what each region made in the removed chain. The removed makers stay as trade routes
+             (cut()), so what was made moves as it did in the whole network.
     Price and value reproduce the whole network's cost and keep its plan optimal in the zoomed one; at exactly
     the marginal price a buyer is indifferent to how much it buys, so where plans tie, the caps pin the quantities.
     With all three the zoomed network reproduces the whole one's plan (tested on the lithium network as the
@@ -1205,22 +1222,16 @@ def zoom(goods, params=None, net=None, caps=True, env=None, **kw):
     z, gone_p, gone_g = cut(nt, goods)
     Y, R, gp_ = h["Y"], h["R"], set(gone_p)
     got = {(g, r, y): 0.0 for g in goods for r in R for y in Y}
-    for n in h["ALL"]:                             # what each region got from the removed chain
+    for n in h["ALL"]:                             # what each region made in the removed chain
         if n[:-1] in gp_ and output(n[:-1]) in goods:
             for y in Y:
                 got[output(n[:-1]), n[-1], y] += h["prod"][n, y].X
-    for s, arcs in h["trade"].items():
-        for k, a in enumerate(arcs):
-            if a[:-2] in gp_ and output(a[:-2]) in goods:
-                for y in Y:
-                    x = h["flow"][s][k, y].X
-                    got[output(a[:-2]), a[-1], y] += x; got[output(a[:-2]), a[-2], y] -= x
     info = dict(processes=gone_p, goods=gone_g, price={}, value={}, cap={}, whole=results(h, lp.ObjVal))
     z.setdefault("base", {})
     for g in goods:
         info["price"][g] = {r: {y: h["bal_all"][g, r, y].Pi for y in Y} for r in R}
         info["value"][g] = {y: h["value"](*g, y) for y in Y}
-        info["cap"][g] = {r: {y: max(got[g, r, y], 0.0) for y in Y} for r in R}
+        info["cap"][g] = {r: {y: got[g, r, y] for y in Y} for r in R}
         z["base"][g] = {"price": info["price"][g], "value": info["value"][g]}
         if caps:
             z["base"][g]["cap"] = info["cap"][g]

@@ -9,8 +9,9 @@ is shredded into black mass, which is traded and recycled into refined metals. O
 (the DRC, for cobalt). Built by the same build() as the lithium model, with the network passed as data
 (network.LITHIUM and network's lifecycle notes explain the format). It is not a calibration: the quantities are
 real, read from public sources (data/battery_2023_2024/, one row per number with its source; load() says how
-each is used), and every cost is a placeholder, so where production lands within the regions' capacities follows
-those placeholders.
+each is used). Costs are sourced too (data/battery_costs/, costs()): each stage's own cost per unit made, by region,
+in USD per kg (million USD per kt) or per kWh (million USD per GWh), so the objective is in million USD. They are
+PRELIMINARY: several are price spreads or single projects, and costs() says which.
 
 Mines are pulled by refining, refining by precursor and cathode, and so on down to the end uses: each stage only
 by the one after it. Mines have their whole output as capacity, and the minerals' other uses (glass, steel,
@@ -21,9 +22,9 @@ at their 2015-2025 rate up to identified resources (network.reserves_available).
 Base materials (network's base-materials notes; critmin_net.base): manganese ore, iron and phosphorus, whose supply
 dwarfs the batteries' use (USGS: 20 Mt of manganese mined in 2024, 1.6 Gt of iron), are bought in each region at a
 price, with no mines, reserves or other uses behind them. Battery-grade manganese sulphate is refined from bought
-manganese; battery-grade iron phosphate is made from bought iron and phosphorus. BASE_PRICE is a placeholder in
-the network's placeholder cost unit, as every other cost here is; base.prices() has USGS's prices in USD for when
-the costs are real.
+manganese; battery-grade iron phosphate is made from bought iron and phosphorus. Manganese and iron are priced at
+USGS's prices per tonne contained (base.prices()); phosphorus, which USGS gives no contained price for, at what is
+left of iron phosphate's price once its iron and conversion are taken out (base_prices()).
 
 Units: mined and refined goods and anode material in kt of contained element (graphite as graphite); precursor,
 cathode, cells, end uses, retired products, scrap and black mass in GWh of the cells they serve ("GWh-equivalents").
@@ -58,22 +59,20 @@ USES = ['ev', 'storage', 'electronics', 'other']
 STAGES = ['base', 'mine', 'refine', 'pcam', 'anode', 'cath', 'cell', 'use', 'eol', 'scrap', 'shred']
 HEADROOM = 1.20                                  # capacity over observed output, as in network.calibrated()
 OPEN = 1e9                                       # capacity where none is modelled (end uses, shredding)
-UNIT_COST = 1.0                                  # PLACEHOLDER: every stage's cost per unit in China; regions differ
-                                                 # only by the Stanford GSB US/China ratios, as calibrated() uses
-SYNTHETIC_COST = 4.0                             # PLACEHOLDER: synthetic anode graphite per unit, above natural's (mined
-                                                 # flake through spheronisation's loss, 1 / 0.395, plus processing, 1: 3.5),
-                                                 # so mined flake is used first, as it is cheaper
-REPURPOSE_COST = 0.5                             # PLACEHOLDER: per GWh of second-life storage
-SHRED_COST = 0.1                                 # PLACEHOLDER: per GWh-equivalent shredded
-RECYCLE_COST = 1.0                               # PLACEHOLDER: hydrometallurgy, per kt of the black mass's main metal
 FEPO4_PER_LI = (55.845 + 30.974 + 4 * 15.999) / 6.94   # kg FePO4 per kg Li in LiFePO4 (standard atomic weights)
 IN_FEPO4 = {'Fe': 55.845 / (55.845 + 30.974 + 4 * 15.999),  # mass share of iron and phosphorus in FePO4
             'P': 30.974 / (55.845 + 30.974 + 4 * 15.999)}
 CUT = {m: ('refine', m) for m in METALS}         # where zoom() cuts each mineral: its battery-grade good
 CUT['graphite'] = ('anode', 'anode')             # (graphite: anode material, so anode plants go with its mines)
-BASE_PRICE = {x: UNIT_COST for x in BASE}        # PLACEHOLDER: per kt contained, in the network's placeholder unit, as
-                                                 # its mines' costs are (base.prices() has USGS's USD prices)
 DATA = N.RAW / "battery_2023_2024"
+COSTS = N.RAW / "battery_costs"
+# How costs() fills a region data/battery_costs/selected.csv does not give: the US and allies at China's cost times
+# a ratio (these keys: RATIO's; others as given), the rest of the world halfway between China and the US (as
+# network.calibrated() prices it), the DRC at China's. Mines are given for every region.
+RATIO = dict(refine_Li='chem', refine_Ni='chem', refine_Co='chem', refine_Mn='chem', anode_natural='chem',
+             anode_synthetic='chem', fepo4_conv='chem', shred='recycle_nmc', recycle_nmc='recycle_nmc',
+             recycle_lfp='recycle_lfp')
+SAME_EVERYWHERE = ('cell_materials', 'repurpose', 'fepo4_price', 'fepo4_conversion_share')
 # Default losses, share of what goes in (rows of stage_losses.csv). Each can be changed per run (network(losses=)).
 LOSSES = {
     ('refine', 'Li', 'Li'): 0.077,   # spodumene concentrate to Li2CO3, 0.923 (Kelly et al. 2021, Table 5; derived).
@@ -117,8 +116,67 @@ CHEMS = {'nmc_hi': ('NMC811', 'High-nickel'),    # IEA's high-nickel group (NMC6
 MAIN = {'nmc_hi': 'Ni', 'nmc_lo': 'Ni', 'lfp': 'Li'}   # the metal a black mass's recycling is counted in
 
 
+def costs():
+    """{(key, region, year): cost}, from data/battery_costs/selected.csv (one row per number: its value, unit, basis,
+    the source rows it comes from in sources_upstream.csv and sources_midstream.csv, and the arithmetic). Every stage's
+    own cost per unit made: purchased inputs the network models are counted where they are made, not here.
+
+    mine_<m>         USD per kg contained, by region, from each region's operations (lithium: Chinese lepidolite,
+                     Australian operations' median, Brazilian hard rock; nickel: Indonesian HPAL to MHP, Australian and
+                     US sulphide, IEA's all-in cost for China; graphite: Mozambique, Canadian and US studies, a Chinese
+                     price). Cobalt is a by-product with no cost of its own: priced at hydroxide payables x LME cobalt.
+    refine_<m>       conversion to battery grade in China, feed excluded; other regions by the 'chem' ratio.
+    pcam_nmc, cath,  the Stanford GSB model's labour and electricity per kWh in China, the US and Korea (the allies),
+    cell_proc        excluding capital and materials; NMC811's, used for every chemistry.
+    cell_materials   separator, electrolyte, foils and casing per kWh (bought; the same everywhere).
+    fepo4_conv       iron phosphate's conversion per kg: fepo4_conversion_share of its price (the rest is iron and
+                     phosphorus, priced as base materials).
+    anode_<route>    price spreads (natural: anode less the flake in it; synthetic: the anode, feed included), IEA.
+    shred, recycle_  shredding per kWh, and hydrometallurgy per kWh of black mass, China; other regions by recycling's
+    nmc, recycle_lfp US/China and Europe/China ratios.
+    repurpose        per kWh of second-life storage, every region (no regional data).
+    Capital costs are in the source tables but not used: capacity is fixed here, so nothing is built.
+    """
+    d = pd.read_csv(COSTS / "selected.csv")
+    raw = {}
+    for r in d.itertuples():
+        for y in (YEARS if pd.isna(r.year) else [int(r.year)]):
+            raw[r.key, r.region, y] = float(r.value)
+    for y in YEARS:
+        raw['fepo4_conv', 'CHN', y] = raw['fepo4_conversion_share', 'CHN', y] * raw['fepo4_price', 'CHN', y]
+    out = {}
+    for k in sorted({k for k, _, _ in raw if not k.startswith('ratio_')}):
+        for y in YEARS:
+            chn = raw[k, 'CHN', y]
+            for r in ('CHN', 'US', 'ALLY', 'ROW', 'SPC'):
+                if (k, r, y) in raw:
+                    v = raw[k, r, y]
+                elif k in SAME_EVERYWHERE:
+                    v = chn
+                elif r in ('US', 'ALLY'):
+                    v = chn * raw[f"ratio_{RATIO[k]}", r, y]
+                else:
+                    v = (chn + out[k, 'US', y]) / 2 if r == 'ROW' else chn
+                out[k, r, y] = v
+    return out
+
+
+def base_prices(c=None):
+    """{material: {year: USD per kg contained}} for the base materials: manganese and iron at USGS's prices per tonne
+    contained (base.prices(): 44% ore CIF China; US iron ore over its grade); phosphorus at iron phosphate's price
+    less its conversion and its iron, per kg of phosphorus in it (derived: USGS gives no contained price)."""
+    from . import base
+    c = costs() if c is None else c
+    p = base.prices()
+    out = {'Mn': {y: p['manganese', y] / 1000 for y in YEARS}, 'Fe': {y: p['iron_ore', y] / 1000 for y in YEARS}}
+    out['P'] = {y: (c['fepo4_price', 'CHN', y] - c['fepo4_conv', 'CHN', y] - out['Fe'][y] * IN_FEPO4['Fe'])
+                / IN_FEPO4['P'] for y in YEARS}
+    return out
+
+
 def sets(intensity, lc=None):
-    """The network's sets for these chemistries. intensity: {chemistry: {mineral: kg per kWh}}; lc: LIFECYCLE."""
+    """The network's sets for these chemistries. intensity: {chemistry: {mineral: kg per kWh}}; lc: LIFECYCLE.
+    Base materials come with no price; network() prices them."""
     lc = {**LIFECYCLE, **(lc or {})}
     chems = list(intensity)
     nmc = [c for c in chems if intensity[c].get('Ni', 0) > 0]          # layered oxides need a Ni/Co/Mn precursor
@@ -179,7 +237,7 @@ def sets(intensity, lc=None):
                 max_new_units=0, short_stages=('use',), value_alone=(), short_gwh={},
                 life=life, coproducts=coprod, route_caps=caps, scrap={'cell': 'scrap'},
                 no_trade=('use', 'eol', 'scrap'), dispose=[('shred', f"bm_{c}") for c in chems],
-                collect=lc["collect"], base={('base', x): {"price": BASE_PRICE[x]} for x in BASE})
+                collect=lc["collect"], base={('base', x): {} for x in BASE})
 
 
 def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=None):
@@ -189,7 +247,7 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     region, year): GWh placed before the horizon}; other {(good, region, year): kt, the minerals' other uses};
     mine {(mineral, region, year): kt mined}; refined {(metal, year): kt refined in the world};
     share {(stage, key, region, year): share}, key a metal (refine), a chemistry (pcam, cath), 'anode' or 'cell';
-    reserves {(mineral, region): spec}; cost_ratio {stage: US/China cost}; losses; lifecycle (LIFECYCLE's keys).
+    reserves {(mineral, region): spec}; costs (costs()); losses; lifecycle (LIFECYCLE's keys).
     losses, life ({use: spec, or 'second_life': spec}), repurpose and collect override the inputs' for one run;
     base {material: spec} replaces a base material's spec (network's base-materials notes: a price, caps).
     need is {(mineral, year): kt}, demand x intensity over every end use, before losses.
@@ -207,7 +265,9 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     net["losses"] = dict(inputs.get("losses", {}) if losses is None else losses)
     if set(base or {}) - set(BASE):
         raise ValueError(f"base: {sorted(set(base) - set(BASE))} are not base materials here ({BASE})")
-    net["base"] = {**net["base"], **{('base', x): s for x, s in (base or {}).items()}}
+    C = inputs["costs"]
+    net["base"] = {('base', x): {"price": v} for x, v in base_prices(C).items()}
+    net["base"].update({('base', x): s for x, s in (base or {}).items()})
     chems = list(I)
     gwh = {(c, y): sum(v for (u, c2, _, y2), v in D.items() if (c2, y2) == (c, y)) for c in chems for y in YEARS}
     need = {(m, y): sum(gwh[c, y] * I[c].get(m, 0.0) for c in chems) for m in MINERALS for y in YEARS}
@@ -231,16 +291,30 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
             else:                                # recycling, end uses, shredding: not limited here
                 v = {y: OPEN / HEADROOM for y in YEARS}
             init_cap[p + (r,)] = {y: HEADROOM * x for y, x in v.items()}
-    pcost = {'refine_bm': RECYCLE_COST, 'shred': SHRED_COST, 'use': 0.0}
+    def unit_cost(p, r, y):                      # costs(): per kt, GWh or GWh-equivalent made (million USD)
+        s = p[0]
+        if s == 'mine':
+            return C[f"mine_{p[1]}", r, y]
+        if s == 'refine' and p[1] == p[2]:
+            return C[f"refine_{p[1]}", r, y]
+        if s == 'refine':                        # hydrometallurgy, per kWh of black mass, so per kt of its main metal
+            c = p[1][3:]
+            return C['recycle_lfp' if MAIN[c] == 'Li' else 'recycle_nmc', r, y] / net["recipe"][p][('shred', p[1])]
+        if s == 'pcam':                          # NMC precursor per kWh; iron phosphate per kg, times kg per kWh
+            return (C['pcam_nmc', r, y] if p[1] == 'sulfates'
+                    else C['fepo4_conv', r, y] * FEPO4_PER_LI * I[p[2]]['Li'])
+        if s == 'anode':
+            return C[f"anode_{p[1]}", r, y]
+        if s == 'cath':
+            return C['cath', r, y]
+        if s == 'cell':
+            return C['cell_proc', r, y] + C['cell_materials', r, y]
+        if s == 'use':                           # repurposing; new cells placed in an end use cost nothing more
+            return C['repurpose', r, y] if p[1].startswith('2nd_') else 0.0
+        return C['shred', r, y]
     cost = {}
     for s in STAGES:
-        pc = {}
-        for p in net["processes"]:
-            if p[0] != s:
-                continue
-            c = (SYNTHETIC_COST if p[1] == 'synthetic' else REPURPOSE_COST if p[1].startswith('2nd_')
-                 else pcost['refine_bm'] if s == 'refine' and p[1].startswith('bm_') else pcost.get(s, UNIT_COST))
-            pc.update({p[1:] + (r, y): c for r in REGIONS for y in YEARS})
+        pc = {p[1:] + (r, y): unit_cost(p, r, y) for p in net["processes"] if p[0] == s for r in REGIONS for y in YEARS}
         cost[s] = (pc, {k: 0.0 for k in pc}, {k: 0.0 for k in pc})
     demand = {(('use', f"{u}_{c}"), r, y): v for (u, c, r, y), v in D.items()}
     for k, v in inputs.get("other", {}).items():
@@ -248,9 +322,7 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     hist = {(('use', f"GWh_{c}", f"{u}_{c}"), r, y): v for (u, c, r, y), v in inputs.get("history", {}).items()}
     net.update(years=list(YEARS), cost=cost, demand=demand, history=hist,
                reserves={('mine', m, r): s for (m, r), s in inputs.get("reserves", {}).items() if m in MINED})
-    ratio = inputs.get("cost_ratio", {})
-    alpha_stage = {s: {'CHN': 1.0, 'SPC': 1.0, 'US': ratio.get(s, 1.0), 'ALLY': ratio.get(s, 1.0),
-                       'ROW': (1.0 + ratio.get(s, 1.0)) / 2} for s in STAGES}
+    alpha_stage = {s: {r: 1.0 for r in REGIONS} for s in STAGES}     # regions differ in the costs themselves
     params = dict(regions=list(REGIONS), alpha={r: 1.0 for r in REGIONS}, import_coef={r: 1.0 for r in REGIONS},
                   region_share={r: 0.0 for r in REGIONS}, alpha_stage=alpha_stage, init_cap=init_cap,
                   ship_value_share=N.SHIP_VALUE_SHARE, shortage_mult=N.SHORTAGE_MULT, build_every=1)
@@ -485,11 +557,8 @@ def load():
             spec["resources"] = max(resources[m, rg], v)
         reserves[m, rg] = spec
 
-    sc = pd.read_csv(N.CAL / "stage_costs_us_china.csv").pivot(index="stage", columns="region", values="usd")
-    ratio = {'pcam': sc.loc['proc', 'US'] / sc.loc['proc', 'CHN'], 'cath': sc.loc['cath', 'US'] / sc.loc['cath', 'CHN'],
-             'cell': sc.loc['cell', 'US'] / sc.loc['cell', 'CHN']}
     return dict(intensity=intensity, demand=demand, history=history, other=other, mine=mine, refined=refined,
-                share=share, reserves=reserves, cost_ratio=ratio, losses=dict(LOSSES), lifecycle=dict(LIFECYCLE))
+                share=share, reserves=reserves, costs=costs(), losses=dict(LOSSES), lifecycle=dict(LIFECYCLE))
 
 
 def zoom(focus, inputs=None, env=None, caps=True, **kw):

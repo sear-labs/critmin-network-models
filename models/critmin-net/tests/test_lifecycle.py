@@ -311,8 +311,13 @@ def test_cut_removes_what_only_feeds_the_cut():
     z, procs, goods = N.cut(net, [LI])
     assert procs == [('mine', 'Li'), ('refine', 'Li', 'Li')] and goods == [('mine', 'Li')]
     assert ('refine', 'bm', 'Li') in z["processes"] and ('refine', 'Ni', 'Ni') in z["processes"]
-    assert ('mine', 'Li') not in z["goods"] and LI in z["goods"] and net["processes"] != z["processes"]
+    assert ('mine', 'Li') not in z["goods"] and LI in z["goods"] and ('mine', 'Li') not in z["processes"]
+    assert z["trade_only"] == [('refine', 'Li', 'Li')] and z["recipe"][('refine', 'Li', 'Li')] == {}  # its routes stay
+    N.check_net(z)
     assert N.cut(net, [('mine', 'Li')])[1] == [('mine', 'Li')]     # cut at the ore: buy it, keep the refinery
+    bad = {**z, "recipe": {**z["recipe"], ('refine', 'Li', 'Li'): {('refine', 'Ni'): 1.0}}}
+    with pytest.raises(ValueError):
+        N.check_net(bad)                           # a trade-only process has no recipe
     with pytest.raises(ValueError):
         N.cut(net, [('eol', 'ev')])                # nothing makes it (it retires): nothing upstream to remove
     with pytest.raises(ValueError):
@@ -330,7 +335,10 @@ def test_zoom_reproduces_the_whole_network():
     m1, h1 = _solve_h(z, params)
     assert m1.Status == gp.GRB.OPTIMAL
     for (n, y), v in h1["prod"].items():
-        assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
+        if n[:-1] in z["trade_only"]:
+            assert v.X == 0.0                      # kept for its trade routes: it makes nothing
+        else:
+            assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
     bought = {(r, y): h1["buy"][LI, r, y].X for r in R for y in Y}
     assert sum(bought.values()) > 0
     assert all(bought[r, y] <= info["cap"][LI][r][y] + 1e-9 for r in R for y in Y)

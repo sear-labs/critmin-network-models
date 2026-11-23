@@ -3,6 +3,40 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.8.0 (2026-11-23)
+
+Battery network costs, sourced (docs/networks-outline.md 3.1: "real costs"). The lithium model is unchanged (12 cases,
+identical fingerprints, results and prices).
+- `data/battery_costs/`: two compiled source tables (`sources_upstream.csv`, 181 rows: mining, refining and 2023-24
+  prices; `sources_midstream.csv`, 141 rows: precursor, cathode, anode, cells, packs, repurposing, shredding and
+  recycling), one row per published number with its URL, table or page, and conversion; and `selected.csv`, the 57
+  numbers the network uses, each naming its source rows and its arithmetic. `verification.csv`: every source row the
+  selection names was checked against its source (57 confirmed, 4 corrected: two rounding slips, and natural anode's
+  spread, 2.6 USD/kg rather than 0.95, as IEA's flake price is per tonne of anode); the check's notes on bases
+  (price vs cost, mixed stages, exchange rates) are in the rows.
+- `battery.costs()`: each stage's own cost per unit made (purchased inputs counted where they are made), by region
+  and year, in USD per kg contained or per kWh. Mines by region from each region's operations; refining, iron
+  phosphate and anode costed in China, other regions by the Stanford GSB precursor ratio (labour and electricity);
+  precursor, cathode and cell processing from the Stanford GSB model for China, the US and Korea (the allies), plus
+  bought cell materials; recycling by IEA's and BNEF's US/China and Europe/China ratios; the rest of the world halfway
+  between China and the US, the DRC at China's. Cobalt, a by-product, is priced (hydroxide payables x LME), not
+  costed; anode costs are price spreads (natural anode then costs more than synthetic, as IEA's prices show). Capital costs are in the source tables but unused (capacity is fixed).
+- `battery.base_prices()`: manganese and iron at USGS's prices per tonne contained; phosphorus derived from iron
+  phosphate's price less its conversion and iron. The placeholders (`UNIT_COST`, `SYNTHETIC_COST`, `REPURPOSE_COST`,
+  `SHRED_COST`, `RECYCLE_COST`, `BASE_PRICE`) and the US/China `cost_ratio` input are gone; `alpha_stage` is 1.
+- What it shows (PRELIMINARY): with capacity at observed output x 1.2, the cheapest region fills its headroom, so
+  China makes all cells in 2024; matching observed shares needs a calibration like the lithium model's
+  (`network.calibrated()`), for the projection-horizon work.
+- Engine: `net["trade_only"]`, processes kept only for their trade routes (no recipe, nothing made). A good is traded
+  on its makers' arcs, so `cut()` keeps a cut good's removed makers this way; `zoom()`'s cap is now what each region
+  made in the removed chain. Without it a co-product such as recycled cobalt could not leave the region it was
+  recovered in, once the primary refinery was cut: the placeholder costs had hidden this. The battery zoom test now
+  matches to 1e-12 on sourced costs (perturbed 1% where regions share a cost, as the DRC shares China's).
+- Engine: under `no_transship` (calibration's rule of origin), what a region buys of a base good counts as its own
+  supply, so a bought good can be exported. Without it the zoomed lithium model could not ship the lithium
+  chemicals it buys, once their makers were kept as trade routes. The lithium model has no base goods, so its
+  fingerprints, results and cell prices are identical to 0.7.0's.
+
 ## 0.7.0 (2026-11-22)
 
 The base-materials layer (docs/networks-outline.md, section 5: Jones's decision). The lithium model is unchanged
