@@ -372,40 +372,55 @@ def test_battery_run_with_focus():
         B.zoom(['Li', 'Ni', 'Co', 'Mn', 'graphite'])
 
 
-# ---- 0.11.0: the battery horizon to 2040
+# ---- 0.11.0 and 0.12.0: the battery horizon to 2040, on curves
 
 @pytest.fixture(scope="module")
-def horizon(battery_cal):
+def horizon():
+    from critmin_net import battery as B
     from critmin_net import horizon as H
-    B, _, cal = battery_cal
     inp = H.load("STEPS")
+    cal = H.calibrate(inp)
     return H, B, inp, cal, {sc: H.run(sc, inputs=inp, cal=cal) for sc in ("cost", "onshore")}
 
 
-def test_horizon_solves_and_keeps_the_observed_years(horizon):
-    """Both scenarios solve with nothing unmet, and 2023 and 2024 are the calibrated network's: every observed
-    regional share, to 1e-4 of the stage's output."""
+def test_horizon_calibrates_the_observed_years(horizon):
+    """calibrate(): every group's output in every region and observed year within 0.5% of its stage's output of the
+    observed share (graphite mining 2%: the anode's natural/synthetic split is not observed), and the full horizon
+    reproduces the same regional shares (its totals may move a little: the chemistry band in the observed years)."""
     H, B, inp, cal, res = horizon
-    ttot = {}
+    assert cal["miss"] < 1.0
+    gt = {}
     for (g, r, y), x in cal["target"].items():
-        ttot[g, y] = ttot.get((g, y), 0.0) + x
+        gt[g, y] = gt.get((g, y), 0.0) + x
     for r in res.values():
         assert r["status"] == 2 and r["short"] == {}
         for (g, rg, y), x in cal["target"].items():
             tot = sum(r["prod"].get(g + (q, y), 0.0) for q in B.REGIONS)
-            if ttot[g, y] > 0:
-                assert r["prod"].get(g + (rg, y), 0.0) / tot == pytest.approx(x / ttot[g, y], abs=1e-4)
+            if gt[g, y] > 0 and tot > 0:
+                tol = H.CAL_TOL.get(g, H.CAL_TOL[None])
+                assert abs(r["prod"].get(g + (rg, y), 0.0) / tot - x / gt[g, y]) <= tol + 1e-6
 
 
 def test_horizon_builds_wait_for_their_region_lead(horizon):
-    """Nothing built serves before its region's lead allows (decisions from 2023) or in the observed years, and the
-    cost-based plan builds cells in China from 2025 while the US's first new cells could serve only from 2026."""
+    """Nothing built serves before its region's lead allows (decisions from 2023) or in the observed years."""
     H, B, inp, cal, res = horizon
     for r in res.values():
         for (s, key, rg, y), v in r["built"].items():
-            assert y >= min(H.YEARS) + H.LEAD[s][rg] and y > max(B.YEARS)
-    built = res["cost"]["built"]
-    assert built.get(('cell', 'cell', 'CHN', 2025), 0.0) > 0
+            lead = H.LEAD['refine' if s == 'hydromet' else s][rg]
+            assert y >= min(H.YEARS) + lead and y > max(B.YEARS)
+
+
+def test_horizon_demand_answers_to_its_curves(horizon):
+    """After 2024 every end use is a demand curve anchored at IEA's projection: what is served is within the curve's
+    range (a quarter to four times the anchor's price) and near the anchor, and nothing is a fixed amount."""
+    H, B, inp, cal, res = horizon
+    D = inp["demand"]
+    r = res["cost"]
+    for y in (2030, 2040):
+        for u in B.USES:
+            iea = sum(v for (uu, c, rr, yy), v in D.items() if uu == u and yy == y)
+            got = sum(v for (g, rr, yy), v in r["served"].items() if g == ('use', u) and yy == y)
+            assert 0.5 * iea <= got <= 2.0 * iea
 
 
 def test_horizon_onshoring_floors_hold_and_cost_more(horizon):
@@ -419,9 +434,16 @@ def test_horizon_onshoring_floors_hold_and_cost_more(horizon):
             continue
         f = H._line(H.ONSHORE, y) * (sum(v for k, v in D.items() if k[3] == y and k[2] in H.US_ALLY)
                                      / sum(v for k, v in D.items() if k[3] == y))
-        groups = {k[:2] for k in r["prod"] if k[0] != 'mine'}
-        for g in groups:
+        for g in {k[:2] for k in r["prod"] if k[0] != 'mine'}:
             tot = sum(r["prod"].get(g + (q, y), 0.0) for q in B.REGIONS)
             ua = sum(r["prod"].get(g + (q, y), 0.0) for q in H.US_ALLY)
             assert ua >= f * tot - 1e-6 * max(tot, 1.0)
-    assert r["obj"] > res["cost"]["obj"]
+    assert r["cost"] > res["cost"]["cost"]
+
+
+def test_horizon_myopic_runs_and_costs_no_less(horizon):
+    """Myopic (five years in view) solves, and seeing less ahead costs at least as much as perfect foresight."""
+    H, B, inp, cal, res = horizon
+    r = H.run("cost", inputs=inp, cal=cal, foresight=5)
+    assert r["status"] == 2
+    assert r["obj"] >= res["cost"]["obj"] - 1e-6 * abs(res["cost"]["obj"])

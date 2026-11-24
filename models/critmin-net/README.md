@@ -64,9 +64,11 @@ is already contained output. Manufacturing scrap is lost for now; with recycling
   in `dispose`.
 - *Reserves:* extraction to date within reserves that grow (discoveries, reclassification) up to identified
   resources, also growing (`reserves`, `reserves_available`).
-- *Engine additions (0.6.0, 0.11.0):* build lead times by stage and, from 0.11.0, by region (`lead`), capacity
-  built in any amount (`lumpy` False) and observed years kept as observed (`observed_to`); recipes and co-products
-  that change by year,
+- *Engine additions (0.6.0, 0.11.0, 0.12.0):* build lead times by stage and, from 0.11.0, by region (`lead`),
+  capacity built in any amount (`lumpy` False) and observed years kept as observed (`observed_to`); from 0.12.0
+  stepped cost curves (`cost_curve`) and demand curves (`demand_curve`), discounting (`params["discount"]`),
+  capacity by vintage that retires (`params["capacity_rule"]`), shared capacity (`pools`), tariffs by good, exporter
+  and importer (`tariffs`), and route shares by region; recipes and co-products that change by year,
   bounds on a route's share of its good (`route_share`), demand on any good (`extra_demand`) with `price()` reading
   back any good's marginal cost, and a unit per good (`units`).
 - *Base materials (0.7.0):* goods whose supply dwarfs energy uses (iron, phosphorus, manganese, copper,
@@ -110,12 +112,25 @@ published EV lifetimes (Xu et al. 2020: most packs last 15-20 years) almost no E
 manufacturing scrap and electronics are most of the recycling feed; an 8-year life, the older assumption,
 retires 100 to 200 times more.
 
-`critmin_net.horizon` (0.11.0) projects the battery network to 2040, PRELIMINARY. Demand comes from IEA's outlooks
+`critmin_net.horizon` (0.11.0; on curves from 0.12.0) projects the battery network to 2040, PRELIMINARY. Demand comes from IEA's outlooks
 (stated or current policies; `src/critmin_net/data/battery_horizon/`), and 2023-2024 are calibrated to the observed
 shares. After that, capacity is built where it is cheapest: at sourced operating and capital costs, and after each
 region's own lead time (`LEAD`: US and allied plants take longer than China's). `run("onshore")` adds floors on the
 US's and allies' share of their own demand at every processing and manufacturing stage.
 `scripts/battery_horizon.py` runs all four cases.
+
+From 0.12.0 every market is a curve, as in the lab's Texas energy-system model (`critmin_net.curves`, stepped
+constant-elasticity curves anchored at an observed or projected point):
+- *supply (cost) curves* on every stage in every region and year, with known operations below the anchor at their
+  own costs (Australia's lithium mines, Indonesia's nickel complexes, ...);
+- *demand curves* for every end use (anchored at IEA's projection), the minerals' other uses and the base materials;
+- *cost curves over time*: operating and capital costs on low, mid and high paths (`COST_PATHS`).
+The observed years are calibrated as offsets on the curves (`calibrate()`), and `audit()` refuses to solve while a
+fixed amount or flat price has no reason in `ALLOW`. Scenario knobs are in `horizon.KNOBS` (elasticities, the
+anchor's entry share, the share of today's unexplained costs kept, the chemistry band, retirement, the discount
+rate). Policy (`critmin_net.policy`): US tariffs by good, exporter and year (Section 301, the forced-labour duty,
+IEEPA and Section 122 as history) and 45X with its phase-outs; `run(policy={})` keeps current law after 2024,
+`run(policy=None)` drops it (2023-2024 always have the policy then in force). `run(foresight=5)` is myopic.
 
 0.4.0 changed only how the model is written: across Alavi's parameters, the calibration and every hook, it
 builds the same Gurobi model as 0.3.0, by Gurobi's model fingerprint, and reports the same results and

@@ -3,6 +3,90 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.12.0 (2026-11-24)
+
+The battery horizon on curves, with recycling built where it pays, US tariffs and 45X (Jones, 2026-11-24: "costs
+should be curves just like supply and demand ... fixed projections are terrible for scenarios"). The lithium model is
+unchanged (12 cases, identical fingerprints, results and prices), and so is the battery network's 2023-2024 (same
+fingerprint, 142,530 M$). The 0.11.0 horizon's results are superseded.
+- Engine (`build()`), each off by default:
+  - `cost_curve`: stepped supply curves on a group of nodes, or on a base material's purchases (`("buy", good, region)`).
+  - `demand_curve`: stepped demand curves on any good, valued in the objective.
+  - `params["discount"]`: every year's terms are discounted.
+  - `params["capacity_rule"] = "cumulative"`: capacity is starting capacity by year (so it can retire) plus builds still within `build_life`.
+  - `pools`: capacity shared by nodes of one region, with unit coefficients.
+  - `tariffs`: by (stage[, good], exporter, importer) and year.
+  - Route shares by region.
+  - Handles `served`, `curve_x` and `weight` are returned.
+- `curves.py`: `ladder()`, `supply_blocks()` (with known operations below the anchor, rising from the dearest one
+  above it) and `demand_blocks()`. These are the Texas model's stepped constant-elasticity curves, with 0.2% steps near a supply anchor.
+- `battery.sets()` and `network()`, both off by default:
+  - `chem_choice`: one good per end use, met by any chemistry; each chemistry retires into its own good.
+  - `co_per_ni`: cobalt as a co-product of nickel mining.
+- `horizon.py` rebuilt on curves (`KNOBS`):
+  - Supply curves on every stage in every region and year. They are anchored at observed output, growing with the world's need, plus an entry share of 2%.
+  - Known operations below each anchor, from operations' 2024 output and costs:
+    - Australia's four lithium mines: Greenbushes 7.81 to Wodgina 23.04 USD per kg Li.
+    - South American and Chinese lithium, Indonesian and Canadian nickel.
+  - Demand curves after 2024 for every end use, anchored at IEA's projection and its 2024 price, which moves with the cell cost path. The minerals' other uses and the base materials (anchored at their whole markets) are curves too.
+  - Cost curves over time (`COST_PATHS`, low, mid and high):
+    - Cells: BatPaC to 2035, then NREL; mid -24% by 2030, -42% by 2040.
+    - Cathode processing: no learning.
+    - Refining and mining: flat; high case has mining +15% by 2040.
+  - Calibration (`calibrate()`): curve offsets put 2023-2024 on the observed shares, refined until within 0.5% of each stage's output (graphite mining 2%). After 2024 the offsets are dropped (`wedge_carry`).
+  - Discounted at 8%.
+  - Capacity:
+    - Nameplate cell capacity from 2025 (IEA 2024).
+    - Mines and refining retire at 4% of 2024's capacity a year; builds serve 25 years.
+    - Plants are shared: anode routes, cell chemistries, NMC precursor and cathode, hydromet.
+  - Chemistry within 10 points of IEA's mix by region.
+  - Cobalt mined as a co-product of nickel (0.019 kt per kt outside the DRC, 2024), with primary cobalt mines in the DRC only.
+  - Recycling:
+    - Shredding is open but costed.
+    - Hydromet starts from IEA's 2023 capacity (China 1.78 Mt cell-equivalent) and is built at its capital cost, so only where it pays.
+    - Capital cost, USD per kWh a year: US 26.9, allies 16.7, China 2.5.
+  - `audit()` refuses to solve while a fixed amount or flat price has no reason in `ALLOW`.
+  - `run(foresight=)` gives myopic runs.
+  - Costs are reported as resource cost, tariffs paid and credits received.
+- `policy.py`, applied in the observed years always and after them by scenario (`run(policy={})` or `None`).
+  - US tariffs by good, exporter and year:
+    - MFN.
+    - Section 301 on China: 25% on chemicals, cathode, anode and nickel ore; cobalt ore from 2024-09; EV cells from 2024-09; other cells and natural graphite from 2026.
+    - IEEPA, 2025-02 to 2026-02, ended by the Supreme Court.
+    - Section 122, 2026-02 to 07.
+    - The forced-labour Section 301 duty from 2026-07-24: China 12.5%, allies about 10% (cells 12.5%), others 10%; minerals and refined chemicals exempt.
+    - Rates in force on 2026-11-24 are held after. Chinese cells into the US pay 40.9% from 2027.
+  - The EU's on China stands for the allies'.
+  - Not applied: Section 232 on vehicle batteries (`s232=True`; contested), the graphite AD/CVD (no orders: the ITC found no injury), China's export controls (licences).
+  - 45X: cells 35 USD per kWh; cathode and anode 10% and refined minerals 10% of production cost, recycled feed included. Phase-out under PL 119-21: components 2030-32, minerals 2031-33. The foreign-entity thresholds are read (`feoc_thresholds()`) but not yet applied.
+- Data (`data/battery_horizon/policy/`, `curves/`):
+  - `tariffs.csv` (129 rows, R), `credits.csv` (407, C), `paths_elasticities.csv` (312, E), `operations_capacity.csv` (464, S).
+  - Independent checks: policy 376 rows, 372 confirmed, 4 corrected in wording; curves 87 rows, 85 confirmed, 2 corrected (Pilgangoora 17.76 USD per kg Li, not 17.42; the EV elasticity's source).
+  - The checks' notes changed the allies' hydromet capital cost (per t of capacity, not of throughput) and the allies' cells tariff (KORUS's zero MFN).
+- What it shows (PRELIMINARY; STEPS, discounted to 2024, resource cost excluding transfers). Nothing unmet in any case.
+  - Resource cost:
+
+    | Case | M M$ |
+    |---|---|
+    | No policy after 2024 | 1.423 |
+    | Current policy | 1.429 |
+    | Onshoring | 1.467 (+3.1%) |
+    | Policy and onshoring | 1.506 |
+    | Myopic (5 years in view) | 1.451 |
+
+    45X pays 39.5 B$ (discounted) under current policy. CPS: 1.329 with no policy, 1.371 onshoring.
+  - Lithium mining: Australia's share rises to 48% in 2030. Greenbushes sits low on its curve; 0.11.0 had Australia out by 2027. Myopic runs move mining to the rest of the world (76% by 2040), whose short lead time suits short sight.
+  - China: 92% of cells in 2040, 87% of refined lithium, all LFP cathode.
+  - Current policy: the US's cell share rises to 11% in 2025, fading as 45X phases out.
+  - Onshoring: the US and allies make 24% of cells, cathode, anode and refined lithium in 2040.
+  - Hydromet rises to about 1,470 GWh-equivalent in 2040, all of it built in China. The US builds none, even with 45X.
+- Still weak:
+  - No elasticities found: EV and storage demand by battery price, refining, components and cells, graphite supply. The EV one is derived; the rest are ours.
+  - No cost paths for refining, mining or components.
+  - No nameplate capacity outside cells and recycling.
+  - The foreign-entity rules are not applied.
+  - The 2% entry anchor and the curves' share persistence are knobs to test.
+
 ## 0.11.0 (2026-11-24)
 
 The battery network to 2040 (`horizon.py`), with lead times by stage and region. The lithium model is unchanged (12

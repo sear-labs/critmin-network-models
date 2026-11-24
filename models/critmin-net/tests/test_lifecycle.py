@@ -414,3 +414,107 @@ def test_zoom_reproduces_the_whole_network():
     assert sum(bought.values()) > 0
     assert all(bought[r, y] <= info["cap"][LI][r][y] + 1e-9 for r in R for y in Y)
 
+
+# ---- 0.12.0: curves, discounting, capacity by vintage, tariffs, route shares by region
+
+def test_cost_curve_fills_cheapest_blocks_first():
+    """A two-block curve on US cells: the first 5 GWh at no extra cost, the rest at +100 per GWh. The US makes at most
+    5 GWh a year (China's cells are only slightly dearer), and the objective carries the blocks used."""
+    net, params = toy()
+    for p in net["processes"]:
+        if p[0] == 'cell':
+            net["cost"]['cell'][0][p[1:] + ('CHN', 2023)] = 1.5
+            for y in Y:
+                net["cost"]['cell'][0][p[1:] + ('CHN', y)] = 1.5
+    nodes = [p + ('US',) for p in net["processes"] if p[0] == 'cell']
+    curve = [(nodes, y, [(5.0, 0.0), (None, 100.0)]) for y in Y]
+    m, h = _solve_h(net, params, cost_curve=curve)
+    assert m.Status == gp.GRB.OPTIMAL
+    for y in Y:
+        assert sum(h["prod"][n, y].X for n in nodes) <= 5.0 + 1e-6
+    assert len(h["curve_x"]) == 2 * len(Y)
+
+
+def test_demand_curve_takes_more_when_cheap():
+    """A demand curve on US EVs: 3 more GWh worth 50 each and 3 worth 0.01 each. Cells cost about 1.1 a GWh in lithium
+    and making, so the first block is taken and the second is not."""
+    net, params = toy()
+    dc = {(('use', 'ev'), 'US', y): [(3.0, 50.0), (3.0, 0.01)] for y in Y}
+    m, h = _solve_h(net, params, demand_curve=dc)
+    assert m.Status == gp.GRB.OPTIMAL
+    for y in Y:
+        assert h["served"][('use', 'ev'), 'US', y, 0].X == pytest.approx(3.0)
+        assert h["served"][('use', 'ev'), 'US', y, 1].X == pytest.approx(0.0, abs=1e-9)
+    with pytest.raises(ValueError):
+        _solve_h(net, params, demand_curve={(('use', 'ev'), 'XX', 2023): [(1.0, 1.0)]})
+
+
+def test_discount_weights_each_year():
+    """With a 10% discount rate the objective is each year's cost weighted by 1.1^-(year - 2023): the same plan, so
+    the discounted objective is the sum of the undiscounted model's yearly costs so weighted."""
+    net, params = toy()
+    m0, h0 = _solve_h(net, params)
+    m1, h1 = _solve_h(net, dict(params, discount=0.10))
+    for y in Y:                                                   # the same plan
+        for n in h0["ALL"]:
+            assert h1["prod"][n, y].X == pytest.approx(h0["prod"][n, y].X, abs=1e-6)
+    assert m1.ObjVal < m0.ObjVal
+    assert h1["weight"](2025) == pytest.approx(1.1 ** -2)
+
+
+def test_cumulative_capacity_retires_the_starting_fleet():
+    """capacity_rule cumulative: cell capacity starts at 50 GWh in each region and retires to 5 by 2026 (init_cap by
+    year); with a one-year lead and continuous builds, capacity is built to replace it, and a plant built lives
+    build_life years."""
+    net, params = toy()
+    net["lumpy"] = False
+    for p in net["processes"]:
+        if p[0] == 'cell':
+            for r in R:
+                params["init_cap"][p + (r,)] = {2023: 50.0, 2024: 50.0, 2025: 30.0, 2026: 5.0}
+    pc, vc, fc = net["cost"]['cell']
+    net["cost"]['cell'] = (pc, {k: 1.0 for k in vc}, fc)
+    params = dict(params, capacity_rule="cumulative")
+    m, h = _solve_h(net, params, lead={'cell': 1})
+    assert m.Status == gp.GRB.OPTIMAL
+    cells = [n for n in h["ALL"] if n[0] == 'cell']
+    for y in Y:
+        made = sum(h["prod"][n, y].X for n in cells)
+        assert sum(h["cap"][n, y].X for n in cells) >= made - 1e-6
+    assert sum(h["newc"][n, y].X for n in cells for y in Y) > 0.0     # 2026 needs more than the 10 left
+    m2, _ = _solve_h(net, dict(params, build_life={'cell': 1}), lead={'cell': 1})
+    assert m2.ObjVal > m.ObjVal - 1e-9                                  # one-year plants: rebuilt every year
+
+
+def test_tariff_by_arc_and_route_share_by_region():
+    """A 1000% tariff on cells from China to the US stops that trade; route shares by region bound one region only."""
+    net, params = toy()
+    for p in net["processes"]:
+        if p[0] == 'cell':
+            for y in Y:
+                net["cost"]['cell'][0][p[1:] + ('US', y)] = 5.0     # US cells dear: the US would import
+    m0, h0 = _solve_h(net, params)
+    imp = lambda h: sum(h["flow"]['cell'][k, y].X for k, a in enumerate(h["trade"]['cell']) if a[-2:] == ('CHN', 'US')
+                        for y in Y)
+    assert imp(h0) > 1.0
+    m1, h1 = _solve_h(net, params, tariffs={('cell', 'CHN', 'US'): 10.0})
+    assert imp(h1) == pytest.approx(0.0, abs=1e-6)
+    with pytest.raises(ValueError):
+        _solve_h(net, params, tariffs={('nope', 'CHN', 'US'): 1.0})
+    q = ('refine', 'bm', 'Li')
+    m2, h2 = _solve_h(net, params, route_share={q: {"max": {'US': 0.0}}})
+    assert all(h2["prod"][q + ('US',), y].X < 1e-9 for y in Y)
+
+
+def test_pools_share_capacity_across_routes():
+    """Two refining routes in the US pooled: the 1e6 of capacity each has becomes one limit on both together, and a
+    pool with nodes of two regions is refused."""
+    net, params = toy()
+    a, b = ('refine', 'Li', 'Li', 'US'), ('refine', 'bm', 'Li', 'US')
+    params["init_cap"][a] = 2.0; params["init_cap"][b] = 0.0
+    m, h = _solve_h(net, params, pools=[{a: 1.0, b: 1.0}])
+    assert m.Status == gp.GRB.OPTIMAL
+    for y in Y:
+        assert h["prod"][a, y].X + h["prod"][b, y].X <= 2.0 + 1e-6
+    with pytest.raises(ValueError):
+        _solve_h(net, params, pools=[{a: 1.0, ('refine', 'bm', 'Li', 'CHN'): 1.0}])

@@ -399,7 +399,8 @@ def data(regions=None):
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
           ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None, reserves=None, life=None,
-          lead=None, route_share=None, extra_demand=None, base=None, quad_cost=None):
+          lead=None, route_share=None, extra_demand=None, base=None, quad_cost=None, cost_curve=None,
+          demand_curve=None, tariffs=None, pools=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
@@ -421,6 +422,26 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     quad_cost: [(nodes, year, gamma)], each adding 0.5 * gamma * (the nodes' production that year)^2 to the objective:
       a cost that rises with output, as a calibration sets it (battery.calibrate()). Nodes not in the network are
       left out, and a term with none left is dropped. None (the default) adds nothing.
+    cost_curve: [(nodes, year, [(size, adder), ...])], a stepped supply curve on the nodes' output that year: the
+      output is split into blocks of at most `size` (None: no limit; the last block should have none), each costing
+      `adder` per unit on top of the nodes' own costs. Adders should rise block by block (a convex curve), so the
+      cheapest blocks fill first. None adds nothing.
+    demand_curve: {(good, region, year): [(size, value), ...]}, a stepped demand curve on top of final demand: up
+      to `size` more units are taken in each block, each worth `value` per unit (subtracted from the objective).
+      Values should fall block by block. None adds nothing.
+    tariffs: {(stage, exporter, importer) or (stage, good, exporter, importer): rate or {year: rate}}, ad valorem
+      on the traded good's embedded value (a good's own key over its stage's), on top of params' tariff_advalorem.
+      None adds nothing.
+    pools: [{node: coef}], capacity shared by nodes of one region (routes to one good, or chemistries on one line):
+      sum coef x output <= sum coef x capacity, in place of each node's own limit. coef puts the nodes' units on one
+      basis (1 for nodes making the same good). A cost curve's nodes may include ("buy", good, region) for a base
+      material's purchases. None: every node has its own capacity, as before.
+    params["discount"]: a rate; every year's costs (and demand curves' values) are weighted by
+      (1 + rate) ** -(year - params.get("discount_base", first year)). None (the default): undiscounted, as hers.
+    params["capacity_rule"]: "cumulative" makes capacity after the starting years the starting capacity that year
+      (init_cap by year, so it can retire) plus what was built and is still within params["build_life"] ({stage:
+      years}, 25 where not given); otherwise (the default) last year's capacity plus this year's arrivals, as hers.
+    route_share's shares may also be {region: share or {year: share}} (a region left out is not bounded).
     Recipe and co-product coefficients may be numbers or {year: number} (intensities that change over time).
     """
     p = params or NOTEBOOK
@@ -445,6 +466,10 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     else:
         R, Y = list(p["regions"]), list(nt["years"])
     Y_start = [y for y in Y if y < min(Y) + 5]     # the calibration's ramp starts after five years
+    disc, d_base = p.get("discount"), p.get("discount_base", min(Y))
+
+    def w(y):                                      # the year's weight in the objective (1.0 undiscounted)
+        return 1.0 if disc is None else (1.0 + disc) ** -(y - d_base)
     tactics = tactics or {}; yields = yields or {}; limits = limits or {}
     LOSS = check_losses({**nt.get("losses", {}), **(losses or {})}, nt, R)
     RES = {**nt.get("reserves", {}), **(reserves or {})}
@@ -466,10 +491,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         v = LEAD.get(n[0], 5)
         return int(v.get(n[-1], 5) if isinstance(v, dict) else v)
     LUMPY = nt.get("lumpy", True)                  # builds in whole plants (her model); False: any amount
+    CUMULATIVE = p.get("capacity_rule") == "cumulative"
+    BUILD_LIFE = p.get("build_life", {})           # {stage: years a built plant serves} (cumulative rule)
     RSHARE = {**nt.get("route_share", {}), **(route_share or {})}
     if set(RSHARE) - set(nt["processes"]):
         raise ValueError(f"route_share: {sorted(set(RSHARE) - set(nt['processes']))} are not processes")
     XD = dict(extra_demand or {})                  # {(good, region, year): units} on top of final demand
+    TARIFFS = dict(tariffs or {})                  # {(stage, exporter, importer): ad valorem rate, or by year}
+    if {k[0] for k in TARIFFS} - set(STG):
+        raise ValueError(f"tariffs: stages {sorted({k[0] for k in TARIFFS} - set(STG))} are not the network's")
     BASE = {**nt.get("base", {}), **(base or {})}  # {good: spec}: bought at a price, no chain behind it
     if set(BASE) - set(GDS):
         raise ValueError(f"base: {sorted(set(BASE) - set(GDS))} are not goods of the network")
@@ -622,6 +652,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 co_in.setdefault((g, r), []).append((q + (r,), k))
     dispose = set(nt.get("dispose", ())) | {g for g, _ in co_in}    # goods whose surplus may go unused
     retire = {}                                    # (eol good, region, year): expression, for route caps and results
+    served = {}                                    # demand curves: (good, region, year, block) -> units taken
+    for (g, r, y), blocks in (demand_curve or {}).items():
+        if g not in GDS or r not in R or y not in Y:
+            raise ValueError(f"demand_curve: {(g, r, y)!r} is not a good, region and year of the model")
+        for k, (size, _) in enumerate(blocks):
+            served[g, r, y, k] = m.addVar(ub=GRB.INFINITY if size is None else float(size))
+    served_at = {}
+    for (g, r, y, k), v in served.items():
+        served_at.setdefault((g, r, y), []).append(v)
     for g in GDS:                                # every good, region and year: made + imported + drawn from stock
         s, name = g                                # == exported + taken by recipes + final demand
         for r in R:
@@ -644,6 +683,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                        + quicksum(cons[n, g, y] for n in users[g, r]))
                 demand = final_demand(g, r, y)
                 use += demand
+                if (g, r, y) in served_at:
+                    use += quicksum(served_at[g, r, y])
                 if short_stage.get(name) == s and (name, r, y) in short:   # demanded, not supplied: unmet, at a penalty
                     supply += short[name, r, y]
                     c = m.addConstr(short[name, r, y] <= demand)
@@ -667,6 +708,10 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         for r in R:
             for y in Y:
                 m.addConstr(cons[q + (r,), g, y] <= by_year(shr, y) * retire[g, r, y])
+    def share_in(v, rs, y):                        # a share, by year, or {region: share or by year}
+        if isinstance(v, dict) and v and all(isinstance(k, str) for k in v):
+            return by_year(v[rs[0]], y) if len(rs) == 1 and rs[0] in v else None
+        return by_year(v, y)
     for q, spec in RSHARE.items():                 # a route's share of its good's output, within bounds
         g = output(q)
         scopes = [[r] for r in R] if spec.get("scope", "region") == "region" else [list(R)]
@@ -674,10 +719,12 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             for y in Y:
                 mine_q = quicksum(prod[q + (r,), y] for r in rs)
                 every_q = quicksum(prod[n, y] for r in rs for n in makers[g, r])
-                if "min" in spec:
-                    m.addConstr(mine_q >= by_year(spec["min"], y) * every_q)
-                if "max" in spec:
-                    m.addConstr(mine_q <= by_year(spec["max"], y) * every_q)
+                lo = share_in(spec["min"], rs, y) if "min" in spec else None
+                hi = share_in(spec["max"], rs, y) if "max" in spec else None
+                if lo is not None:
+                    m.addConstr(mine_q >= lo * every_q)
+                if hi is not None:
+                    m.addConstr(mine_q <= hi * every_q)
     for g, spec in BASE.items():                   # optional ceilings on what is bought
         for r, c in spec.get("cap", {}).items():
             for y in Y:
@@ -695,11 +742,25 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             for y in Y:
                 m.addConstr(quicksum(prod[('rec', tk, tg, r), y] for tk in PACK_T for r in R)
                             == quicksum(demand_rec[(tg, r, y)] for r in R))
+    POOLED = {}
+    for pool in pools or ():
+        if len({n[-1] for n in pool}) != 1 or set(pool) - set(ALL):
+            raise ValueError(f"pools: a pool's nodes must be nodes of one region, got {sorted(pool)!r}")
+        for n in pool:
+            POOLED[n] = pool
+
+    def yl_of(n):
+        return yields.get((n[1], n[2]), 1.0) if n[0] == 'mine' else 1.0
+    for pool in pools or ():
+        for y in Y:
+            m.addConstr(quicksum(c * prod[n, y] for n, c in pool.items())
+                        <= quicksum(c * yl_of(n) * cap[n, y] for n, c in pool.items()))
     for n in ALL:
         mc = nt["max_cap"][n[0]]
         for y in Y:
             yl = yields.get((n[1], n[2]), 1.0) if n[0] == 'mine' else 1.0
-            m.addConstr(prod[n, y] <= yl * cap[n, y])
+            if n not in POOLED:
+                m.addConstr(prod[n, y] <= yl * cap[n, y])
             if LUMPY:                              # whole plants; otherwise newc alone is the build
                 m.addConstr(newc[n, y] <= mc * inv[n, y])
                 m.addConstr(cap[n, y] <= mc * act[n, y])
@@ -707,7 +768,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         ys_n = [y for y in Y if y < min(Y) + max(L, 1) or y <= observed_to]; yw_n = [y for y in Y if y not in ys_n]
         for y in yw_n:
             m.addConstr(act[n, y] == act[n, y - 1] + inv[n, y - L])
-            m.addConstr(cap[n, y] <= newc[n, y - L] + cap[n, y - 1])
+            if CUMULATIVE and n not in fixed_cap:  # starting capacity that year (it may retire) plus live builds
+                life_n = BUILD_LIFE.get(n[0], 25)
+                m.addConstr(cap[n, y] <= (by_year(init_cap.get(n, 0.0), y) if init_cap is not None
+                                          else nt["init_capacity"][n[0]])
+                            + quicksum(newc[n, v] for v in Y if v + L <= y < v + L + life_n))
+            else:
+                m.addConstr(cap[n, y] <= newc[n, y - L] + cap[n, y - 1])
         if n in fixed_cap:                         # calibration: capacity fixed (a number, or by year)
             for y in Y: m.addConstr(cap[n, y] == by_year(fixed_cap[n], y))
         for y in ys_n:
@@ -785,12 +852,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         pc, vc, fc = cost[s]
         ns = [n for n in N[s] if n[-1] == r]
         if s == 'mine':
-            return a_(s, r) * (quicksum(prod[n, y] * pc[n[1:] + (y,)] / yields.get((n[1], r), 1.0) for y in Y for n in ns)
-                               + quicksum(newc[n, y] * vc[n[1:] + (y,)] for y in Y for n in ns)
-                               + quicksum(inv[n, y] * fc[n[1:] + (y,)] for y in Y for n in ns))
-        return a_(s, r) * (quicksum(prod[n, y] * pc[n[1:] + (y,)] for y in Y for n in ns)
-                           + quicksum(newc[n, y] * vc[n[1:] + (y,)] for y in Y for n in ns)
-                           + quicksum(inv[n, y] * fc[n[1:] + (y,)] for y in Y for n in ns))
+            return a_(s, r) * (quicksum(prod[n, y] * pc[n[1:] + (y,)] / yields.get((n[1], r), 1.0) * w(y)
+                                        for y in Y for n in ns)
+                               + quicksum(newc[n, y] * (vc[n[1:] + (y,)] * w(y)) for y in Y for n in ns)
+                               + quicksum(inv[n, y] * (fc[n[1:] + (y,)] * w(y)) for y in Y for n in ns))
+        return a_(s, r) * (quicksum(prod[n, y] * (pc[n[1:] + (y,)] * w(y)) for y in Y for n in ns)
+                           + quicksum(newc[n, y] * (vc[n[1:] + (y,)] * w(y)) for y in Y for n in ns)
+                           + quicksum(inv[n, y] * (fc[n[1:] + (y,)] * w(y)) for y in Y for n in ns))
 
     def import_cost(r):
         tot = 0
@@ -801,9 +869,13 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                     continue
                 tau = tariff.get(s, 0.0) if coerced(i, j) else 0.0
                 if kappa is None:                  # hers: tariff multiplies the shipping cost
-                    tot += quicksum((1.0 + tau) * SHIP_COST[r] * flow[s][k, y] for y in Y)
+                    tot += quicksum(((1.0 + tau) * SHIP_COST[r] * w(y)) * flow[s][k, y] for y in Y)
                 else:                              # calibrated: trade cost and tariff, shares of value
-                    tot += quicksum((kappa + tau) * value(s, a, y) * flow[s][k, y] for y in Y)
+                    tot += quicksum(((kappa + tau) * value(s, a, y) * w(y)) * flow[s][k, y] for y in Y)
+                tk = (s, a[-3], i, j) if (s, a[-3], i, j) in TARIFFS else (s, i, j)
+                if tk in TARIFFS:
+                    tot += quicksum((by_year(TARIFFS[tk], y) * value(s, a, y) * w(y)) * flow[s][k, y]
+                                    for y in Y if by_year(TARIFFS[tk], y))
         return import_coef[r] * tot + advalorem_cost(r)
 
     cv = {}
@@ -845,12 +917,12 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     def advalorem_cost(r):                         # tariff on the goods' embedded value
         if r not in adv["targets"]:
             return 0
-        return quicksum(adv["rates"][s] * value(s, a, y) * flow[s][k, y]
+        return quicksum((adv["rates"][s] * value(s, a, y) * w(y)) * flow[s][k, y]
                         for s in adv["rates"] for k, a in enumerate(trade[s]) if a[-2] == 'CHN' and a[-1] == r
                         for y in Y)
 
     region_cost = {r: quicksum(stage_cost(s, r) for s in STG) + import_cost(r)
-                   + quicksum(base_price(g, r, y) * buy[g, r, y] for g in BASE for y in Y) for r in R}
+                   + quicksum((base_price(g, r, y) * w(y)) * buy[g, r, y] for g in BASE for y in Y) for r in R}
 
     co_cost = 0
     if cobalt:                                     # refined Co into NMC cathode, by region
@@ -861,23 +933,38 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             for r in R:
                 m.addConstr(drc[r, y] + spot[r, y] ==
                             CO_PER_NMC * quicksum(prod[('cath', tp, 'nmc', r), y] for tp in PROC_T))
-        co_cost = quicksum(a_('proc', r) * CO_REFINE[r] * (drc[r, y] + spot[r, y])
-                           + CO_MINE["cost"] / co_y * drc[r, y] + CO_SPOT * spot[r, y]
+        co_cost = quicksum(a_('proc', r) * CO_REFINE[r] * w(y) * (drc[r, y] + spot[r, y])
+                           + CO_MINE["cost"] / co_y * w(y) * drc[r, y] + CO_SPOT * w(y) * spot[r, y]
                            for r in R for y in Y)
     short_by_r = p.get("shortage_mult_region", {})
-    short_cost = quicksum(short_by_r.get(r, short_mult) * embedded(short_stage[to], to, y) * v
+    short_cost = quicksum((short_by_r.get(r, short_mult) * embedded(short_stage[to], to, y) * w(y)) * v
                           for (to, r, y), v in short.items())
-    hold_cost = (quicksum(sp["hold_share"] * embedded(st, g, y) * v for (st, g, r, y), v in stock.items())
+    hold_cost = (quicksum((sp["hold_share"] * embedded(st, g, y) * w(y)) * v for (st, g, r, y), v in stock.items())
                  if stock else 0)
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     for nodes, y, gamma in quad_cost or ():
         q = quicksum(prod[n, y] for n in nodes if (n, y) in prod)
         if q.size():
-            obj = obj + 0.5 * gamma * q * q
+            obj = obj + (0.5 * gamma * w(y)) * q * q
+    curve_x = {}                                   # cost curves: (term, block) -> units in the block
+    for t, (nodes, y, blocks) in enumerate(cost_curve or ()):
+        q = quicksum(prod[n, y] for n in nodes if (n, y) in prod)
+        q += quicksum(buy[n[1], n[2], y] for n in nodes if n[0] == "buy" and (n[1], n[2], y) in buy)
+        if not q.size():
+            continue
+        xs = [m.addVar(ub=GRB.INFINITY if size is None else float(size)) for size, _ in blocks]
+        m.addConstr(quicksum(xs) == q)
+        for k, ((_, adder), x) in enumerate(zip(blocks, xs)):
+            curve_x[t, k] = x
+            if adder:
+                obj = obj + (float(adder) * w(y)) * x
+    if served:
+        obj = obj - quicksum((float(demand_curve[g, r, y][k][1]) * w(y)) * v for (g, r, y, k), v in served.items())
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock, cap=cap, newc=newc,
              hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire,
-             bal_all=bal_all, short_cap_all=short_cap_all, buy=buy, value=embedded)
+             bal_all=bal_all, short_cap_all=short_cap_all, buy=buy, value=embedded, served=served,
+             curve_x=curve_x, weight=w)
     return obj, h
 
 

@@ -64,3 +64,27 @@ def test_horizon_capex_and_lead_cover_every_built_stage(steps):
     assert H.LEAD['mine']['ROW'] == min(H.LEAD['mine'].values())
     assert H.CRF == pytest.approx(0.0936788, rel=1e-6)
 
+
+def test_curves_are_convex_and_anchored():
+    """0.12.0, curves.py: a supply curve's blocks reach Q0 where the adder is the offset, rise block by block and end
+    open; a demand curve takes Q0 at the anchor value and its values fall."""
+    from critmin_net import curves as C
+    s = C.supply_blocks(100.0, 10.0, 2.0, offset=1.5)
+    cum, at = 0.0, None
+    for size, adder in s[:-1]:
+        cum += size
+        if abs(cum - 100.0) < 1e-9:
+            at = adder
+    assert at == pytest.approx(1.5) and s[-1][0] is None
+    assert all(b[1] >= a[1] - 1e-12 for a, b in zip(s, s[1:]))
+    d = C.demand_blocks(50.0, 80.0, -0.5)
+    cum = 0.0
+    for size, value in d:
+        cum += size
+        if value == pytest.approx(80.0):
+            assert cum == pytest.approx(50.0)
+    assert all(b[1] <= a[1] for a, b in zip(d, d[1:]))
+    with pytest.raises(ValueError):
+        C.ladder(1.0, -1.0, "supply")
+    ops = C.supply_blocks(10.0, 17.6, 1.0, steps=[(4.0, 7.8), (3.0, 17.4), (3.0, 23.0)])
+    assert ops[0] == (pytest.approx(4.0), pytest.approx(7.8 - 17.6))
