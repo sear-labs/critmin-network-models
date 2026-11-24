@@ -1,8 +1,10 @@
 """Run the battery horizon (critmin_net.horizon) and write results/battery_horizon/ (not committed): production,
 capacity, builds, demand served and recycling by stage group, region and year, and a summary of costs and transfers,
 for each case: no policy after 2024 or current policy (tariffs, 45X), each with and without the onshoring floors,
-under stated (STEPS) and current (CPS) policies demand, with perfect foresight; and the cost case myopic (five
-years in view). PRELIMINARY. Needs a full Gurobi licence; about a minute.
+and current policy with China's export controls on the US from 2027, under stated (STEPS) and current (CPS) policies
+demand, with perfect foresight; and, for STEPS, the cost case myopic (five years in view), with today's unexplained
+costs (the calibration's offsets) kept after 2024, and with new mines at their region's own cost instead of the
+greenfield studies' (the sensitivity lithium's regional split turns on). PRELIMINARY. Needs a full Gurobi licence; about a minute.
 
     PYTHONPATH=src python scripts/battery_horizon.py
 """
@@ -13,8 +15,14 @@ import pandas as pd
 from critmin_net import horizon as H
 
 OUT = Path(__file__).resolve().parents[1] / "results" / "battery_horizon"
-CASES = [("no policy", "cost", None, None), ("policy", "cost", {}, None), ("no policy + onshore", "onshore", None, None),
-         ("policy + onshore", "onshore", {}, None), ("no policy, myopic", "cost", None, 5)]
+KEEP = {"wedge_carry": {2024: 1.0, 2025: 1.0}}    # today's unexplained costs (the calibration's offsets) kept
+NO_GF = {"greenfield": {}}                        # new mines at the region's own cost, not the greenfield studies'
+CONTROLS = {"china_controls": {"from_year": 2027}}   # China's export controls on the US from 2027
+CASES = [("no policy", "cost", None, None, None), ("policy", "cost", {}, None, None),
+         ("no policy + onshore", "onshore", None, None, None), ("policy + onshore", "onshore", {}, None, None),
+         ("policy + China controls", "cost", CONTROLS, None, None),
+         ("no policy, myopic", "cost", None, 5, None), ("no policy, offsets kept", "cost", None, None, KEEP),
+         ("no policy, new mines at own cost", "cost", None, None, NO_GF)]
 SHOW = [('mine', 'Li'), ('refine', 'Li'), ('refine', 'Ni'), ('anode', 'anode'), ('cath', 'lfp'), ('cath', 'nmc_hi'),
         ('cell', 'cell')]
 
@@ -25,10 +33,10 @@ def main():
     for demand in ("STEPS", "CPS"):
         inp = H.load(demand)
         cal = H.calibrate(inp)
-        for name, sc, pol, fs in CASES:
-            if fs and demand != "STEPS":
+        for name, sc, pol, fs, kn in CASES:
+            if (fs or kn) and demand != "STEPS":
                 continue
-            r = H.run(sc, inputs=inp, cal=cal, policy=pol, foresight=fs)
+            r = H.run(sc, inputs=inp, cal=cal, policy=pol, foresight=fs, knobs=kn)
             assert r["status"] == 2, (demand, name, r["status"])
             tag = dict(demand=demand, case=name)
             for (s, k, rg, y), v in r["prod"].items():

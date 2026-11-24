@@ -146,6 +146,7 @@ def costs():
     shred, recycle_  shredding per kWh, and hydrometallurgy per kWh of black mass, China; other regions by recycling's
     nmc, recycle_lfp US/China and Europe/China ratios.
     repurpose        per kWh of second-life storage, every region (no regional data).
+    The DRC (SPC) takes the rest of the world's cost wherever it has no number of its own.
     Capital costs are in the source tables but not used: capacity is fixed here, so nothing is built.
     """
     d = pd.read_csv(COSTS / "selected.csv")
@@ -166,8 +167,10 @@ def costs():
                     v = chn
                 elif r in ('US', 'ALLY'):
                     v = chn * raw[f"ratio_{RATIO[k]}", r, y]
-                else:
-                    v = (chn + out[k, 'US', y]) / 2 if r == 'ROW' else chn
+                elif r == 'ROW':
+                    v = (chn + out[k, 'US', y]) / 2
+                else:                              # the DRC (SPC): as the rest of the world where it has no number
+                    v = out[k, 'ROW', y]           # (0.13.0; before, China's, which made it a China-cost hub)
                 out[k, r, y] = v
     return out
 

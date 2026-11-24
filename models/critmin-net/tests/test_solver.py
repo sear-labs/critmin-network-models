@@ -402,11 +402,12 @@ def test_horizon_calibrates_the_observed_years(horizon):
 
 
 def test_horizon_builds_wait_for_their_region_lead(horizon):
-    """Nothing built serves before its region's lead allows (decisions from 2023) or in the observed years."""
+    """Nothing built serves before its region's lead allows (an expansion's own lead; decisions from 2023) or in the
+    observed years."""
     H, B, inp, cal, res = horizon
     for r in res.values():
         for (s, key, rg, y), v in r["built"].items():
-            lead = H.LEAD['refine' if s == 'hydromet' else s][rg]
+            lead = (H.EXPANSION[key, rg]["lead"] if s == 'expand' else H.LEAD['refine' if s == 'hydromet' else s][rg])
             assert y >= min(H.YEARS) + lead and y > max(B.YEARS)
 
 
@@ -447,3 +448,87 @@ def test_horizon_myopic_runs_and_costs_no_less(horizon):
     r = H.run("cost", inputs=inp, cal=cal, foresight=5)
     assert r["status"] == 2
     assert r["obj"] >= res["cost"]["obj"] - 1e-6 * abs(res["cost"]["obj"])
+
+
+# ---- 0.13.0: rules of origin, the DRC, export controls and 45X's foreign-entity rule
+
+@pytest.fixture(scope="module")
+def horizon_policy(horizon):
+    H, B, inp, cal, _ = horizon
+    cases = {"policy": {}, "feoc": {"feoc": True}, "controls": {"china_controls": {"from_year": 2027}}}
+    return {k: H.run("cost", inputs=inp, cal=cal, policy=v) for k, v in cases.items()}
+
+
+def _flows(r, stage, y, exp=None, imp=None):
+    return sum(v for (s, _, e, i, yy), v in r["trade"].items()
+               if s == stage and yy == y and (exp is None or e == exp) and (imp is None or i == imp))
+
+
+def _made(r, stage, region, y):
+    return sum(v for k, v in r["prod"].items() if k[0] == stage and k[-2] == region and k[-1] == y)
+
+
+def test_horizon_regions_export_only_what_they_make(horizon, horizon_policy):
+    """Rules of origin (from 2025): in every later year no region exports more of a stage's goods than it made, so
+    nothing passes through a low-tariff region (before 0.13.0 the US bought China's cathode through the DRC)."""
+    H, B, inp, cal, res = horizon
+    for r in [res["cost"], *horizon_policy.values()]:
+        for y in H.YEARS:
+            if y in B.YEARS:
+                continue
+            for s in ('mine', 'refine', 'pcam', 'cath', 'anode', 'cell'):
+                for g in B.REGIONS:
+                    assert _flows(r, s, y, exp=g) <= _made(r, s, g, y) + 1e-4 * max(1.0, _made(r, s, g, y))
+
+
+def test_horizon_drc_builds_no_midstream_by_default(horizon, horizon_policy):
+    """KNOBS no_entry: the DRC makes no precursor, cathode, anode or cells (it has none, none is announced), even with
+    the US's tariffs on everyone else."""
+    H, B, inp, cal, res = horizon
+    for r in [res["cost"], *horizon_policy.values()]:
+        for y in H.YEARS:
+            for s in ('pcam', 'cath', 'anode', 'cell'):
+                assert _made(r, s, 'SPC', y) <= 1e-6
+
+
+def test_horizon_china_controls_close_its_exports_to_the_us(horizon_policy):
+    """china_controls from 2027: China sells the US no graphite, anode, cathode, precursor or cells, and the US is
+    still served (from its own plants and other regions)."""
+    r = horizon_policy["controls"]
+    assert r["status"] == 2 and r["short"] == {}
+    for (s, g, e, i, y), v in r["trade"].items():
+        if e == 'CHN' and i == 'US' and y >= 2027 and (s in ('anode', 'cath', 'pcam', 'cell') or g == 'graphite'):
+            assert v <= 1e-6
+
+
+def test_horizon_feoc_caps_chinese_inputs_to_us_cells(horizon, horizon_policy):
+    """45X's foreign-entity rule (PL 119-21): in each year cells earn the credit, US cell plants take at most
+    (1 - threshold) of their cathode and anode from China, and complying costs no less than the policy without it."""
+    from critmin_net import policy as P
+    H, B, inp, cal, _ = horizon
+    r, p = horizon_policy["feoc"], horizon_policy["policy"]
+    th, cr = P.feoc_thresholds(H.YEARS)['component'], P.credits(H.YEARS, "PL 119-21")['cell']
+    for y in H.YEARS:
+        if y in B.YEARS or th[y] <= 0 or cr[y] <= 0:
+            continue
+        chn = sum(_flows(r, s, y, exp='CHN', imp='US') for s in ('cath', 'anode'))
+        take = sum(_made(r, s, 'US', y) + _flows(r, s, y, imp='US') - _flows(r, s, y, exp='US') for s in ('cath', 'anode'))
+        assert chn <= (1 - th[y]) * take + 1e-4 * max(1.0, take)
+    assert r["obj"] >= p["obj"] - 1e-6 * abs(p["obj"])
+
+
+def test_horizon_drc_cobalt_quota_and_expansions_hold(horizon, horizon_policy):
+    """With policy, the DRC exports at most its quota of cobalt (96.6 kt from 2026); in every case brownfield
+    expansions stay within their room (EXPANSION share x 2024's capacity) and only where an expansion is sourced."""
+    from critmin_net import policy as P
+    H, B, inp, cal, res = horizon
+    q = P.drc_cobalt_quota(H.YEARS)
+    r = horizon_policy["policy"]
+    for y, cap in q.items():
+        ex = sum(v for (s, g, e, i, yy), v in r["trade"].items() if g == 'Co' and e == 'SPC' and yy == y)
+        assert ex <= cap + 1e-6
+    for rr in [res["cost"], *horizon_policy.values()]:
+        for (m, rg, y), v in rr["expanded"].items():
+            assert (m, rg) in H.EXPANSION
+            room = H.EXPANSION[m, rg]["share"] * rr["cap"].get(('mine', m, rg, max(B.YEARS)), 0.0)
+            assert v <= room + 1e-6 * max(1.0, room)

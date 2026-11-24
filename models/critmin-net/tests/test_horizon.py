@@ -88,3 +88,35 @@ def test_curves_are_convex_and_anchored():
         C.ladder(1.0, -1.0, "supply")
     ops = C.supply_blocks(10.0, 17.6, 1.0, steps=[(4.0, 7.8), (3.0, 17.4), (3.0, 23.0)])
     assert ops[0] == (pytest.approx(4.0), pytest.approx(7.8 - 17.6))
+
+
+def test_operations_keep_their_own_size_in_later_years():
+    """0.12.1: in a later year (steps_total) known operations keep their own size, new capacity up to the anchor costs
+    the region's sourced cost P, and every tranche is in merit order, so the curve stays convex."""
+    from critmin_net import curves as C
+    b = C.supply_blocks(30.0, 17.6, 2.0, steps=[(4.0, 7.8), (3.0, 17.4), (3.0, 43.0)], steps_total=10.0)
+    assert b[0] == (pytest.approx(4.0), pytest.approx(7.8 - 17.6))
+    assert (pytest.approx(20.0), pytest.approx(0.0)) in [(x, y) for x, y in b[:-1]]   # the room to Q0 at P
+    assert all(q[1] >= p_[1] - 1e-12 for p_, q in zip(b, b[1:]))
+    assert sum(x for x, _ in b[:-1]) > 30.0 and b[-1][0] is None
+
+
+def test_mining_tables_follow_their_rows():
+    """0.13.0: EXPANSION, GREENFIELD and ROYALTY take the checked rows of battery_horizon/mining/mining_realism.csv
+    (medians and conversions as their comments say), and every row there was checked (verification.csv)."""
+    import statistics
+    import pandas as pd
+    from critmin_net import network as N
+    d = pd.read_csv(N.RAW / "battery_horizon" / "mining" / "mining_realism.csv").set_index("id")
+    v = pd.read_csv(N.RAW / "battery_horizon" / "mining" / "verification.csv")
+    assert set(v.id) == set(d.index) and set(v.verdict) <= {"CONFIRMED", "CORRECTED"}
+    cx = lambda *ids: [float(d.loc[i, "capex_usd_per_kg_yr"]) for i in ids]
+    op = lambda *ids: [float(d.loc[i, "cost_usd_per_kg_contained"]) for i in ids]
+    assert H.EXPANSION['Li', 'ROW']["capex"] == pytest.approx(statistics.median(cx("X54", "X49", "X31")))
+    assert H.EXPANSION['Li', 'CHN']["capex"] == pytest.approx(statistics.mean(cx("X39", "X40")), abs=0.01)
+    assert H.EXPANSION['Li', 'US']["capex"] == pytest.approx(cx("X127")[0])
+    assert H.EXPANSION['Ni', 'ALLY']["capex"] == pytest.approx(cx("X88")[0])
+    assert H.GREENFIELD['Li', 'ALLY'] == pytest.approx(statistics.median(op("X10", "X62", "X59")))
+    assert H.ROYALTY['Li', 'ALLY'] == pytest.approx(op("X12")[0])
+    assert all(e["lead"] >= 1 and 0 < e["share"] <= 1 for e in H.EXPANSION.values())
+    assert all(v >= 0 for v in H.ROYALTY.values())

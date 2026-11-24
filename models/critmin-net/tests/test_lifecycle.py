@@ -518,3 +518,26 @@ def test_pools_share_capacity_across_routes():
         assert h["prod"][a, y].X + h["prod"][b, y].X <= 2.0 + 1e-6
     with pytest.raises(ValueError):
         _solve_h(net, params, pools=[{a: 1.0, ('refine', 'bm', 'Li', 'CHN'): 1.0}])
+
+
+# ---- 0.13.0: a process's own lead, capacity ceilings, reserves over several nodes
+
+def test_process_lead_ceiling_and_pooled_reserves():
+    """A process's own lead wins over its stage's; cap_max bounds a node's capacity; a reserve on a tuple of nodes
+    bounds their extraction together."""
+    net, params = _jump()
+    net["lumpy"] = False
+    cell = next(p for p in net["processes"] if p[0] == 'cell')
+    st, _, _ = _status(net, params, lead={'cell': 3})
+    assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)            # the stage's three years: 2025 cannot grow
+    st, _, _ = _status(net, params, lead={'cell': 3, cell: 1})       # the process's one year wins
+    assert st == gp.GRB.OPTIMAL
+    st, _, _ = _status(net, dict(params, cap_max={cell + (r,): 10.0 for r in R}), lead={cell: 1})
+    assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)            # held at 10 + 10: the jump cannot be met
+    net2, params2 = toy()
+    us, chn = ('mine', 'Li', 'US'), ('mine', 'Li', 'CHN')
+    m, h = _solve_h(net2, params2, reserves={(us, chn): 3.0})
+    assert m.Status == gp.GRB.OPTIMAL
+    assert sum(h["prod"][n, y].X for n in (us, chn) for y in Y) <= 3.0 + 1e-6
+    with pytest.raises(ValueError):
+        _status(net2, params2, reserves={(us, ('mine', 'Li', 'XX')): 3.0})

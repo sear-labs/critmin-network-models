@@ -3,6 +3,121 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.13.0 (2026-11-24)
+
+Committed together with 0.12.1: the two were developed in the same files. 0.12.1's horizon results are superseded;
+the lithium model is unchanged (all 12 fingerprinted cases), and so is the battery network's 2023-2024 calibration.
+
+Engine (`build()`): lead times by process; `params["cap_max"]`; reserves shared by several nodes; a stockpile that
+opens in a given year; `no_transship` from a given year.
+
+
+Structural fixes found when the foreign-entity rule and export controls showed no effect:
+- **Rules of origin in the horizon** (`KNOBS["rules_of_origin"]`, from 2025): a region exports only what it made.
+  Without it the US bought China's cathode and anode through the DRC, the one region with no US tariff, so tariffs,
+  45X's foreign-entity rule and export controls all missed. Not in 2023-2024: trade there is not observed, and with
+  the rule graphite mining calibrates to 3.5%, not 2%. `build(no_transship=)` takes a first year as well as True.
+- **The DRC's costs**: `battery.costs()` gave the DRC China's cost at every stage without a number of its own (every
+  stage but mining). It now takes the rest of the world's. The lithium model and the 2023-2024 calibration tests are
+  unchanged.
+- **No new DRC midstream by default** (`KNOBS["no_entry"]`): with rest-of-world costs and no US tariff, the DRC
+  became the US's cathode and cell supplier from 2030 (230 GWh-eq of cathode), though it has no such plants and
+  none is announced. Precursor, cathode, anode and cells there are held at 2024's (none); refining stays open.
+  `no_entry=[]` lets it build.
+- `run()` returns `trade` {(stage, good, exporter, importer, year): units}.
+- Tests: regions export only what they make; the DRC builds no midstream; China's export controls stop its sales to
+  the US; the foreign-entity cap holds and costs no less.
+
+Mining realism (data: `battery_horizon/mining/`, 128 rows, ids X, every row checked independently: 114 confirmed, 14
+corrected):
+- **Brownfield expansions** (`EXPANSION`) where one is sourced:
+  - lithium in Australia (47.9 USD per kg a year, 2-year lead), the rest of the world (18.49), China (115.11) and the
+    US (309.74);
+  - nickel in the allies (72.73) and the rest of the world (27.3).
+
+  Each is a process beside the region's mines, at their operating cost, with room for half of 2024's capacity (ours).
+- **Greenfield operating costs** (`GREENFIELD`) price new capacity on later years' lithium curves: allies 14.52, rest
+  of the world 14.11, US 15.35. Chile's cheap Atacama brine cannot grow, since it has quotas.
+- **Royalties and lease payments** (`ROYALTY`), added to every year's mining cost (calibration absorbs them in
+  2023-2024):
+  - lithium: allies 2.41, rest of the world 4.77 (Chile's CORFO payments 6.92), China 2.89;
+  - nickel: allies 0.42, rest of the world 0.27;
+  - graphite: rest of the world 0.015.
+- **The DRC's cobalt export quota** (96.6 kt a year from 2026; `policy.drc_cobalt_quota()`) with policy on.
+  `drc_quota=False` turns it off.
+- `run()` counts expansions as their mineral's mining, returns `expanded`, and reports their builds at their own
+  lead.
+- U58 (Matawinie capex) was converted at the 2023 exchange rate; now 2022's (3.6905, was 3.5561).
+- Pyrometallurgy stays off: recoveries are sourced, but no operating cost is.
+- What it does (PRELIMINARY; STEPS, no policy after 2024):
+  - Lithium mining in 2040:
+
+    | Region | 0.12.1 | Now |
+    |---|---|---|
+    | Allies | 6% | 76% |
+    | Rest of world | 87% | 17% |
+
+    The flip comes from the greenfield costs and royalties: new rest-of-world supply no longer comes at Chile's brine
+    cost.
+  - Rest-of-world lithium expansions fill their room (61 kt) by 2030.
+  - Nickel grows from 3.56 Mt (2024) to 4.25 Mt (2040), mostly through Indonesian HPAL expansions.
+
+Policy, recycling and docs:
+- 45X's foreign-entity rules (`policy={"feoc": True}`) and China's export controls (`china_controls`), as scenarios.
+- Yards for retired packs and black mass (from 2025), and second life on a cost curve (up to 80% of retired EV packs
+  viable). Pyromet+ is built but off.
+- `KNOBS["greenfield"]`: `{}` prices new mines at their region's own cost (0.12.1's rule).
+- `scripts/battery_horizon.py` adds two cases: China's export controls, and new mines at their region's own cost.
+- `docs/battery-horizon.md`, its figures and the network diagram are redrawn: shredding and black mass as one stage,
+  yards, hydromet+ and pyromet+, expansions and royalties.
+- What it shows (PRELIMINARY; STEPS):
+  - Policy changes who supplies the US (allies and the rest of the world instead of China), not where cells are made
+    (China 92% in 2040).
+  - The foreign-entity rule cuts China's anode to the US by up to a quarter in 2030-2032.
+  - Onshoring adds 44 B USD (3.0%).
+  - Lithium mining's regional split turns on the greenfield costs and on foresight:
+
+    | Lithium mined, 2040 | Allies | Rest of world + DRC |
+    |---|---|---|
+    | Default | 76% | 20% |
+    | New mines at their region's own cost | 8% | 88% |
+    | Myopic | 19% | 78% |
+
+## 0.12.1 (2026-11-24)
+
+Fixes to the horizon's supply curves, found while drawing them, and visual docs. 0.12.0's horizon results are
+superseded; the lithium model and the battery network's 2023-2024 are unchanged.
+- Later years' supply curves are a merit order (`curves.supply_blocks(steps_total=)`):
+  - existing operations at their own size (retiring) and costs;
+  - new capacity up to the anchor at the region's sourced cost;
+  - the curve's steps above the anchor.
+
+  0.12.0 scaled known operations with world demand, so Greenbushes-cost lithium grew about sixfold by 2035. A first
+  fix priced growth at each region's dearest operation instead, which set China's at Jiangte's lepidolite
+  (43.6 USD per kg). Neither is what new capacity costs.
+- The curve anchors for mining and refining now grow with the minerals' other uses as well as the batteries' need
+  (about 3.4x to 2040, not 6x).
+- `scripts/battery_horizon.py`: a case keeping 2024's offsets after 2024 (`wedge_carry`), the sensitivity the
+  lithium result turns on.
+- `docs/battery-horizon.md`: what the horizon is, how to run it, the knobs, results and what is weak. Figures
+  (`docs/figures/`) are drawn by `scripts/battery_horizon_figures.py`, plus a network diagram
+  (`battery_network.svg`).
+- What it shows (PRELIMINARY; STEPS, discounted):
+  - Resource cost:
+
+    | Case | M M$ |
+    |---|---|
+    | No policy after 2024 | 1.423 |
+    | Current policy | 1.430 |
+    | Onshoring | 1.468 (+3.1%) |
+    | Policy and onshoring | 1.506 |
+
+  - Lithium mining by default goes 90% to the rest of the world by 2040, the cheapest new capacity (11.4 USD per kg).
+    Keeping 2024's offsets reverses it (China 74%). It is the one result that turns on a choice; refining, cathode,
+    cells and onshoring's cost barely move.
+  - Cells: China 92% in 2040 (75% with onshoring floors). The US makes 11% in 2025 with 45X, falling to 5% by 2033.
+  - Hydromet feed is about 1,650 GWh-equivalent in 2040, built almost all in China.
+
 ## 0.12.0 (2026-11-24)
 
 The battery horizon on curves, with recycling built where it pays, US tariffs and 45X (Jones, 2026-11-24: "costs

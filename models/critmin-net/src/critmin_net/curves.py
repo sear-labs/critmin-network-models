@@ -36,11 +36,32 @@ def ladder(Q0, e, side):
     return size, r.astype(float)
 
 
-def supply_blocks(Q0, P, e, offset=0.0, steps=None):
+def supply_blocks(Q0, P, e, offset=0.0, steps=None, steps_total=None, growth_cost=None):
     """[(size, adder)] for build()'s cost_curve: the nodes' output in blocks, each costing `adder` on top of the nodes'
     own unit cost P: offset + (r - 1) * P, so the block ending at Q0 costs offset more than P, and an open last block
-    at TOP. steps: [(size, cost)] of known operations (cheapest first) to use below Q0 in place of the curve, each
-    at offset + (cost - P), scaled to Q0; the curve's blocks above Q0 then rise from the dearest operation's cost."""
+    at TOP.
+
+    steps: [(size, cost)] of known operations. Observed years (steps_total None): the operations, scaled to Q0, fill
+    the curve below Q0, each at offset + (cost - P), and the blocks above Q0 rise from the dearest operation's cost,
+    so the anchor sits at a block boundary (calibrate() needs that). Later years (steps_total, the operations' own
+    size, retiring): a merit order of every tranche sorted by cost: the operations at their own costs and size, the
+    room up to Q0 at P (new capacity at the region's sourced cost; growth_cost, a greenfield cost, where given), and
+    the curve's blocks above Q0 at that cost x r."""
+    if steps and steps_total is not None:          # a later year: merit order
+        tot = sum(s for s, _ in steps)
+        size_to = min(steps_total, Q0) if Q0 > 0 else 0.0
+        tr = [(s * size_to / tot if tot else 0.0, c) for s, c in steps]
+        gc = P if growth_cost is None else growth_cost
+        if Q0 > size_to:
+            tr.append((Q0 - size_to, gc))
+        if Q0 > 0:
+            size, r = ladder(Q0, e, "supply")
+            tr += [(float(sz), rr * gc) for sz, rr in zip(size, r) if rr > 1.0]
+        tr.sort(key=lambda x: x[1])
+        out = [(sz, offset + (c - P)) for sz, c in tr]
+        top = max(TOP * gc, max(c for _, c in tr) if tr else 0.0)
+        out.append((None, offset + (top - P)))
+        return out
     out = []
     base, lift = P, 0.0                            # the curve above Q0: ratios of `base`, from `lift` over P
     if steps:

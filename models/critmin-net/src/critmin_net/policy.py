@@ -159,3 +159,33 @@ def feoc_thresholds(years):
         last = max(by)
         out[k] = {y: (by.get(y, 0.0) if y <= last else by[last]) for y in years}
     return out
+
+
+# China's export controls (R123-R128): graphite licences in force since 2023-12-01 (a ban to the US 2024-12-03 to
+# 2025-11-08); the 2025-10 controls on cells, cathode, precursor and anode material suspended to 2027-01-10. As a
+# scenario they close China's exports of the listed goods to the targets (a prohibitive tariff).
+CONTROLS_GOODS = [('mine', 'graphite'), ('anode', None), ('cath', None), ('pcam', None), ('cell', None)]
+
+
+def china_controls(years, net, targets=('US',), from_year=2027, goods=None):
+    """{(stage, good, 'CHN', target) or (stage, 'CHN', target): {year: rate}}: 100 (10,000%) from from_year on the
+    goods (CONTROLS_GOODS by default: graphite and the suspended 2025-10 list), so nothing flows."""
+    out = {}
+    for s, g in goods or CONTROLS_GOODS:
+        for t in targets:
+            names = [g] if g else [None]
+            for name in names:
+                key = (s, name, 'CHN', t) if name else (s, 'CHN', t)
+                out[key] = {y: (100.0 if y >= from_year else 0.0) for y in years}
+    return out
+
+
+# The DRC's cobalt export quota (ARECOMS; battery_horizon/mining/mining_realism.csv): 87 kt plus 9.6 kt strategic in
+# 2026 (X98, X99), 96.6 kt in 2027 (X100); held after, as other policy is after the as-of date.
+DRC_COBALT_QUOTA = {2026: 87.0 + 9.6, 2027: 96.6}
+
+
+def drc_cobalt_quota(years):
+    """{year: kt Co the DRC may export}, from 2026."""
+    last = max(DRC_COBALT_QUOTA)
+    return {y: DRC_COBALT_QUOTA.get(y, DRC_COBALT_QUOTA[last]) for y in years if y >= min(DRC_COBALT_QUOTA)}

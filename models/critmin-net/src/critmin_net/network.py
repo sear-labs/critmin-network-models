@@ -63,7 +63,8 @@ allies, China and rest of world (LLNL_REGIONS), and adds, from published sources
   * ship_value_share   trade cost as a share of the goods' value, the same at every stage, in place
                        of her shipping cost per unit (which is ~10x the value of ore and ~1% of a pack's)
   * no_transship       rules of origin: a region exports only what it makes, so a tariff on China
-                       cannot be dodged by re-exporting Chinese goods through a third region
+                       cannot be dodged by re-exporting Chinese goods through a third region (True: every
+                       year; a year: from that year on)
 Policies and shocks that close or cut China's arcs act from tactics["from_year"] (2031 in config.yaml),
 so the other regions have the five-year lead to build; the network sees them coming.
 """
@@ -210,6 +211,7 @@ STOCKPILE = dict(
     initial={},                                   # {(stage, good, region): stock at the start}; none by default
     max={},                                       # {(stage, region): ceiling on that stage's stock, every good
                                                   # summed, each year}; none by default
+    from_year=None,                               # 0.13.0: no stock held before this year (None: from the first)
     end_at_least_start=True)                      # no stock drawn in the horizon's last year, and each good ends at
                                                   # least where it started. Otherwise the end reads as a free
                                                   # drawdown, and stock stands in for capacity the last year lacks
@@ -413,7 +415,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
       over the network's own (net["reserves"]); see reserves_available.
     life: {process: lifetime spec}, replacing the network's spec for that process (net["life"]; see LIFECYCLE).
     lead: {stage: years, or {region: years}}, over the network's (net["lead"]), a stage's entry replacing the
-      network's whole; 5 where neither says (for a stage or a region). A region's own lead (US and allied plants
+      network's whole; 5 where neither says (for a stage or a region). A process may have its own entry (0.13.0:
+      a mine's expansion faster than a new mine), which wins over its stage's. A region's own lead (US and allied plants
       taking longer to permit and build than China's) is off unless a network or a run gives one.
     route_share: {process: {"min": share, "max": share, "scope": "region" or "world"}}, shares a number or by year,
       over the network's (net["route_share"]).
@@ -442,6 +445,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
       (init_cap by year, so it can retire) plus what was built and is still within params["build_life"] ({stage:
       years}, 25 where not given); otherwise (the default) last year's capacity plus this year's arrivals, as hers.
     route_share's shares may also be {region: share or {year: share}} (a region left out is not bounded).
+    params["cap_max"]: {node: number or {year: number}}, a ceiling on a node's capacity (0.13.0). reserves' keys may be
+      a tuple of nodes drawing on one deposit (a mine and its expansion), whose extraction is summed (0.13.0).
     Recipe and co-product coefficients may be numbers or {year: number} (intensities that change over time).
     """
     p = params or NOTEBOOK
@@ -482,16 +487,18 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     TRADE_ONLY = set(nt.get("trade_only", ()))     # processes kept for their trade routes only (zoom())
     ROUTE_CAP = nt.get("route_caps", {})           # {process: share}: its input <= share x that good's retirement
     COLLECT = nt.get("collect", 1.0)               # share of what retires that must be taken (repurposed or recycled)
-    LEAD = {**nt.get("lead", {}), **(lead or {})}  # {stage: years, or {region: years}, from a decision to capacity}
-    if not all(s in STG and all(int(v) == v and v >= 0 for v in (y.values() if isinstance(y, dict) else [y]))
+    LEAD = {**nt.get("lead", {}), **(lead or {})}  # {stage or process: years, or {region: years}}
+    if not all((s in STG or s in nt["processes"])
+               and all(int(v) == v and v >= 0 for v in (y.values() if isinstance(y, dict) else [y]))
                for s, y in LEAD.items()):
-        raise ValueError(f"lead: stages must be the network's and years whole and >= 0, got {LEAD!r}")
+        raise ValueError(f"lead: keys must be the network's stages or processes and years whole and >= 0, got {LEAD!r}")
 
-    def lead_of(n):                                # node n's lead: its stage's, or its region's at its stage
-        v = LEAD.get(n[0], 5)
+    def lead_of(n):                                # node n's lead: its process's, else its stage's; by region or not
+        v = LEAD.get(n[:-1], LEAD.get(n[0], 5))
         return int(v.get(n[-1], 5) if isinstance(v, dict) else v)
     LUMPY = nt.get("lumpy", True)                  # builds in whole plants (her model); False: any amount
     CUMULATIVE = p.get("capacity_rule") == "cumulative"
+    CAP_MAX = p.get("cap_max", {})                 # {node: ceiling on its capacity, or by year}
     BUILD_LIFE = p.get("build_life", {})           # {stage: years a built plant serves} (cumulative rule)
     RSHARE = {**nt.get("route_share", {}), **(route_share or {})}
     if set(RSHARE) - set(nt["processes"]):
@@ -611,7 +618,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         sp_r = R if sp["regions"] == 'all' else list(sp["regions"])
         if not set(sp_r) <= set(R):
             raise ValueError(f"stockpile: regions {sorted(set(sp_r) - set(R))} are not in the model ({R})")
-        stock = {(st, g, r, y): m.addVar() for st in sp["stages"] for g in OUTT[st] for r in sp_r for y in Y}
+        stock = {(st, g, r, y): (m.addVar(ub=0.0) if sp["from_year"] is not None and y < sp["from_year"] else m.addVar())
+                 for st in sp["stages"] for g in OUTT[st] for r in sp_r for y in Y}
     m.update()
 
     def draw(st, g, r, y):                         # stock drawn down in year y (negative when built up)
@@ -733,10 +741,12 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             for y in Y:
                 m.addConstr(quicksum(buy[g, r, y] for r in R) <= by_year(spec["world_cap"], y))
     for n, spec in RES.items():                    # extraction to date within what is extractable by then
-        if n not in prod_nodes:
-            raise ValueError(f"reserves: {n!r} is not a node")
+        nodes = list(n) if n and isinstance(n[0], tuple) else [n]   # a node, or a tuple of nodes on one deposit
+        if set(nodes) - prod_nodes:
+            raise ValueError(f"reserves: {n!r} is not a node or a tuple of nodes")
         for y in Y:
-            m.addConstr(quicksum(prod[n, v] for v in Y if v <= y) <= reserves_available(spec, y - min(Y)))
+            m.addConstr(quicksum(prod[q, v] for q in nodes for v in Y if v <= y)
+                        <= reserves_available(spec, y - min(Y)))
     if alavi:                                      # Alavi's recycling: exactly her recycling demand, world-wide
         for tg in REC_T:
             for y in Y:
@@ -777,6 +787,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 m.addConstr(cap[n, y] <= newc[n, y - L] + cap[n, y - 1])
         if n in fixed_cap:                         # calibration: capacity fixed (a number, or by year)
             for y in Y: m.addConstr(cap[n, y] == by_year(fixed_cap[n], y))
+        if n in CAP_MAX:                           # a ceiling on capacity (an expansion's potential)
+            for y in Y: m.addConstr(cap[n, y] <= by_year(CAP_MAX[n], y))
         for y in ys_n:
             m.addConstr(act[n, y] == nt["init_active"])
             if n not in fixed_cap:
@@ -835,6 +847,8 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                 for b in OUTT[s]:
                     src = [n for n in N[s] if n[-1] == r and n[-2] == b]
                     for y in Y:
+                        if no_transship is not True and y < no_transship:
+                            continue
                         own = quicksum(prod[n, y] for n in src)
                         if (s, b) in BASE:
                             own += buy[(s, b), r, y]
