@@ -43,7 +43,7 @@ Simplifications, each deliberate for a mechanism test: the anode is made from mi
 graphite (petroleum coke, not modelled), sharing each region's anode capacity, and graphite is not recovered by
 recycling; portable electronics are at low-nickel NMC's intensity (their LiCoO2 is not modelled) and "other"
 applications at the world EV mix; histories before 2023 use 2023's chemistry mix; capacity is fixed in every year
-at the observed level times HEADROOM, so nothing is built.
+at the observed level times HEADROOM, so nothing is built (horizon.py builds it, to 2040).
 
 Calibration (calibrate(); run(calibrated=True)): at sourced costs the cheapest region fills its headroom (China makes
 every cell in 2024). calibrate() adds, by positive mathematical programming, a cost rising with output to each region
@@ -251,7 +251,8 @@ def sets(intensity, lc=None):
                 collect=lc["collect"], base={('base', x): {} for x in BASE})
 
 
-def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=None, quad=None):
+def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=None, quad=None, years=None,
+            capex=None, lead=None, crf=None):
     """(net, params, build options, need) for build() from the inputs (load() makes them).
 
     inputs: intensity {chem: {mineral: kg/kWh}}; demand {(use, chem, region, year): GWh}; history {(use, chem,
@@ -262,6 +263,13 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     losses, life ({use: spec, or 'second_life': spec}), repurpose and collect override the inputs' for one run;
     base {material: spec} replaces a base material's spec (network's base-materials notes: a price, caps).
     quad: calibrate()'s quadratic costs (build()'s quad_cost); None for none.
+    years: the model's years, YEARS and any after them (a projection: horizon.py). Every later year takes 2024's
+      costs and capacity; capacity can then grow only by building, which needs capex.
+    capex: {(key, region): capital cost per unit of yearly capacity} (USD per kg or per kWh a year), key as
+      capex_key() names a process; None (the default) builds nothing, as before. With it, capacity is built in any
+      amount (build()'s lumpy False), at capex x crf for each year the plant serves within the years, after `lead`
+      ({stage: years or {region: years}}, build()'s). Capacity in YEARS stays as observed; a plant decided in 2023
+      with a two-year lead serves from 2025 (what came online in 2025 was decided before it).
     need is {(mineral, year): kt}, demand x intensity over every end use, before losses.
     """
     lc = {**LIFECYCLE, **inputs.get("lifecycle", {})}
@@ -278,11 +286,17 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     if set(base or {}) - set(BASE):
         raise ValueError(f"base: {sorted(set(base) - set(BASE))} are not base materials here ({BASE})")
     C = inputs["costs"]
-    net["base"] = {('base', x): {"price": v} for x, v in base_prices(C).items()}
+    Y = list(years or YEARS)
+    if Y[:len(YEARS)] != YEARS or Y != sorted(set(Y)):
+        raise ValueError(f"years: YEARS ({YEARS}) and then later years in order, got {Y}")
+
+    def b(y):                                    # the observed year a later year takes its costs and capacity from
+        return y if y in YEARS else max(YEARS)
+    net["base"] = {('base', x): {"price": {y: v[b(y)] for y in Y}} for x, v in base_prices(C).items()}
     net["base"].update({('base', x): s for x, s in (base or {}).items()})
     chems = list(I)
-    gwh = {(c, y): sum(v for (u, c2, _, y2), v in D.items() if (c2, y2) == (c, y)) for c in chems for y in YEARS}
-    need = {(m, y): sum(gwh[c, y] * I[c].get(m, 0.0) for c in chems) for m in MINERALS for y in YEARS}
+    gwh = {(c, y): sum(v for (u, c2, _, y2), v in D.items() if (c2, y2) == (c, y)) for c in chems for y in Y}
+    need = {(m, y): sum(gwh[c, y] * I[c].get(m, 0.0) for c in chems) for m in MINERALS for y in Y}
     init_cap, limits = {}, {}
     for p in net["processes"]:
         s = p[0]
@@ -302,7 +316,7 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
                 v = {y: sh.get(('cell', 'cell', r, y), 0.0) * gwh[p[-1][4:], y] for y in YEARS}
             else:                                # recycling, end uses, shredding: not limited here
                 v = {y: OPEN / HEADROOM for y in YEARS}
-            init_cap[p + (r,)] = {y: HEADROOM * x for y, x in v.items()}
+            init_cap[p + (r,)] = {y: HEADROOM * v[b(y)] for y in Y}
     def unit_cost(p, r, y):                      # costs(): per kt, GWh or GWh-equivalent made (million USD)
         s = p[0]
         if s == 'mine':
@@ -326,22 +340,56 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
         return C['shred', r, y]
     cost = {}
     for s in STAGES:
-        pc = {p[1:] + (r, y): unit_cost(p, r, y) for p in net["processes"] if p[0] == s for r in REGIONS for y in YEARS}
-        cost[s] = (pc, {k: 0.0 for k in pc}, {k: 0.0 for k in pc})
+        pc = {p[1:] + (r, y): unit_cost(p, r, b(y)) for p in net["processes"] if p[0] == s for r in REGIONS for y in Y}
+        vc = {k: 0.0 for k in pc}
+        if capex is not None:                    # a plant decided in y serves from y + lead to the last year
+            for p in net["processes"]:
+                if p[0] != s or capex_key(p) is None:
+                    continue
+                for r in REGIONS:
+                    L = _lead(lead, s, r)
+                    for y in Y:
+                        vc[p[1:] + (r, y)] = capex[capex_key(p), r] * crf * max(0, max(Y) - (y + L) + 1)
+        cost[s] = (pc, vc, {k: 0.0 for k in pc})
     demand = {(('use', f"{u}_{c}"), r, y): v for (u, c, r, y), v in D.items()}
     for k, v in inputs.get("other", {}).items():
         demand[k] = demand.get(k, 0.0) + v
     hist = {(('use', f"GWh_{c}", f"{u}_{c}"), r, y): v for (u, c, r, y), v in inputs.get("history", {}).items()}
-    net.update(years=list(YEARS), cost=cost, demand=demand, history=hist,
+    net.update(years=Y, cost=cost, demand=demand, history=hist,
                reserves={('mine', m, r): s for (m, r), s in inputs.get("reserves", {}).items() if m in MINED})
     alpha_stage = {s: {r: 1.0 for r in REGIONS} for s in STAGES}     # regions differ in the costs themselves
     params = dict(regions=list(REGIONS), alpha={r: 1.0 for r in REGIONS}, import_coef={r: 1.0 for r in REGIONS},
                   region_share={r: 0.0 for r in REGIONS}, alpha_stage=alpha_stage, init_cap=init_cap,
                   ship_value_share=N.SHIP_VALUE_SHARE, shortage_mult=N.SHORTAGE_MULT, build_every=1)
+    if capex is not None:
+        if crf is None:
+            raise ValueError("capex needs crf, the capital recovery factor that annualises it")
+        net.update(lumpy=False, lead=dict(lead or {}))
+        params["observed_to"] = max(YEARS)
     bkw = dict(limits=limits)
     if quad:
         bkw["quad_cost"] = quad
     return net, params, bkw, need
+
+
+def capex_key(p):
+    """The capex key of process p (network()'s capex), or None for a process that is not built (end uses, retired
+    products, shredding and recycling, whose capacity is open)."""
+    s = p[0]
+    if s == 'mine':
+        return f"mine_{p[1]}"
+    if s == 'refine' and p[1] == p[2]:
+        return f"refine_{p[1]}"
+    if s == 'pcam':
+        return 'pcam_nmc' if p[1] == 'sulfates' else 'pcam_lfp'
+    if s in ('anode', 'cath', 'cell'):
+        return s
+    return None
+
+
+def _lead(lead, s, r):                           # build()'s rule: a stage's years, or its region's; 5 where not given
+    v = (lead or {}).get(s, 5)
+    return int(v.get(r, 5) if isinstance(v, dict) else v)
 
 
 def _read(name):

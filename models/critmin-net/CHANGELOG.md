@@ -3,6 +3,67 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.11.0 (2026-11-24)
+
+The battery network to 2040 (`horizon.py`), with lead times by stage and region. The lithium model is unchanged (12
+cases, identical fingerprints, results and prices), and so is the battery network over 2023-2024 (same fingerprint,
+142,530 M$).
+- Engine (`build()`), each off by default:
+  - `lead` may give a stage's years by region, `{stage: {region: years}}` (5 for a region not given).
+  - A network with `lumpy` False builds capacity in any amount, priced by its cost's `var` per unit added, with no
+    plants (`inv` stays 0) and no plant ceiling; the model stays an LP (or QP).
+  - `params["observed_to"]` keeps capacity at the starting capacity through that year whatever the lead, so observed
+    years stay observed while builds are still decided from the first year.
+  - Handles `cap` and `newc` are returned.
+- `battery.network(years=, capex=, lead=, crf=)`: years after 2024 take 2024's costs and capacity, and with `capex`
+  capacity is built (continuous, from 2023 decisions) at capex x crf for each year a plant serves to the last year.
+  `battery.capex_key()` names a process's capital cost. Without them, nothing changes.
+- `horizon.py` (PRELIMINARY):
+  - `load("STEPS" | "CPS")`: demand to 2040 from IEA's Global EV Outlook 2026 and Global Critical Minerals Outlook
+    2025. EVs are world deployment by mode and regional shares, each region's 2025 chemistry moved as IEA's world mix
+    moves, with sodium-ion left out. Storage is anchored in 2025, at IEA's 2030 additions, and IEA's installed power in
+    2035 and 2040 at 3 hours, plus replacements. Electronics, other applications and the minerals' other uses are
+    held at 2024. Manufacturing scrap falls to 6% in 2030.
+  - `CAPEX`, by stage and region, from the cost tables and IEA:
+    - IEA GCMO 2025's top producer and rest-of-world capital intensities for lithium, nickel and refining;
+    - IEA's ACTM per-kWh costs for cathode, anode and cells;
+    - single projects for graphite, manganese and cobalt.
+    Annualised at 8% over 25 years.
+  - `LEAD`, by stage and region (Jones: US and allied plants long, China short, the rest of the world shorter still
+    for mines). Mines: China 5, ROW 2, DRC 3, US 10, allies 5. Cells: China 1, ROW 2, US 3, allies 4.
+  - `run("cost" | "onshore")`: the observed years calibrated, and from 2025 the model's decision (Jones). "onshore"
+    is a floor on the US's and allies' share of their own demand at every processing and manufacturing stage:
+    40% from 2030 (the EU's 2030 benchmarks), rising to 60% in 2040 (ours). Mines have no floor.
+  - The anode's 2024 capacity is split between its routes in later years as the observed solve uses them.
+  - Solved by dual simplex (barrier stalls on the open capacities beside the retirement tails).
+- `data/battery_horizon/`:
+  - `demand.csv` (385 rows, D), `pipeline_capex.csv` (224, P: IEA's supply outlook, announced recycling capacity,
+    capital costs) and `lead_times.csv` (91, T), one row per number with its source;
+  - `verification.csv`: an independent check of 188 rows (184 confirmed, 4 corrected, the corrections applied in the
+    rows: two chart reads, and IEA's manganese sulphate chart labelled kt where it means Mt).
+- `scripts/battery_horizon.py` writes `results/battery_horizon/` (not committed).
+- What it shows (PRELIMINARY; STEPS, then CPS in brackets). Nothing unmet in any case.
+  - The four cases cost 3.15 M M$ for 2023-2040 (2.83), and onshoring adds 141 B$, 4.5% (129 B$, 4.6%).
+  - Cost-based, China makes 97% of cells in 2040 and 87% of refined lithium. The rest of the world mines 93% of
+    lithium, its new mines (11.4 USD per kg plus 5.2 annualised capital) undercutting Australia's existing ones
+    (17.6). Without the calibration's costs after 2024, the US and allies' existing cell and pCAM plants run little,
+    as the 2024 wedges said they would at sourced costs.
+  - Onshoring, the floors bind: the US and allies make 24% of cells, cathode, anode and refined lithium in 2040. The
+    US builds most of the midstream, being cheaper to run and quicker to build than the allies. The allies build
+    most of the cells.
+  - Against IEA's supply outlook (the comparison, not a constraint), nickel mining and refining are close: 4.0 Mt
+    against IEA's 4.5 in 2030, refining about 35% China in both. Anode and natural graphite are not: IEA's outlook
+    is announced projects, flat after 2030, while here anode follows demand and is made from synthetic graphite,
+    whose feed is not modelled.
+- Still weak:
+  - The storage path (3 hours, and 2035-40 from installed power).
+  - Capital costs from single projects (graphite, manganese, cobalt).
+  - Cobalt mining is priced alike everywhere, so its new mines sit near refining, within reserves.
+  - Recycling capacity is open.
+  - Costs are held at 2024 (no learning).
+  - Australia's mines against new ROW mines are within 1 USD per kg.
+  - The policy cases (US tariffs, the 45X credit) need a sourcing pass.
+
 ## 0.10.0 (2026-11-23)
 
 Lithium's battery-network costs re-sourced: the calibration's largest wedges (0.9.0) were lithium's, and China's mining

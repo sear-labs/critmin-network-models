@@ -371,3 +371,57 @@ def test_battery_run_with_focus():
     with pytest.raises(ValueError):
         B.zoom(['Li', 'Ni', 'Co', 'Mn', 'graphite'])
 
+
+# ---- 0.11.0: the battery horizon to 2040
+
+@pytest.fixture(scope="module")
+def horizon(battery_cal):
+    from critmin_net import horizon as H
+    B, _, cal = battery_cal
+    inp = H.load("STEPS")
+    return H, B, inp, cal, {sc: H.run(sc, inputs=inp, cal=cal) for sc in ("cost", "onshore")}
+
+
+def test_horizon_solves_and_keeps_the_observed_years(horizon):
+    """Both scenarios solve with nothing unmet, and 2023 and 2024 are the calibrated network's: every observed
+    regional share, to 1e-4 of the stage's output."""
+    H, B, inp, cal, res = horizon
+    ttot = {}
+    for (g, r, y), x in cal["target"].items():
+        ttot[g, y] = ttot.get((g, y), 0.0) + x
+    for r in res.values():
+        assert r["status"] == 2 and r["short"] == {}
+        for (g, rg, y), x in cal["target"].items():
+            tot = sum(r["prod"].get(g + (q, y), 0.0) for q in B.REGIONS)
+            if ttot[g, y] > 0:
+                assert r["prod"].get(g + (rg, y), 0.0) / tot == pytest.approx(x / ttot[g, y], abs=1e-4)
+
+
+def test_horizon_builds_wait_for_their_region_lead(horizon):
+    """Nothing built serves before its region's lead allows (decisions from 2023) or in the observed years, and the
+    cost-based plan builds cells in China from 2025 while the US's first new cells could serve only from 2026."""
+    H, B, inp, cal, res = horizon
+    for r in res.values():
+        for (s, key, rg, y), v in r["built"].items():
+            assert y >= min(H.YEARS) + H.LEAD[s][rg] and y > max(B.YEARS)
+    built = res["cost"]["built"]
+    assert built.get(('cell', 'cell', 'CHN', 2025), 0.0) > 0
+
+
+def test_horizon_onshoring_floors_hold_and_cost_more(horizon):
+    """onshore: from 2030 the US and allies make at least the floor share of their own demand at every processing and
+    manufacturing group (mines have none), and the plan costs more than the cost-based one."""
+    H, B, inp, cal, res = horizon
+    D = inp["demand"]
+    r = res["onshore"]
+    for y in H.YEARS:
+        if y < min(H.ONSHORE):
+            continue
+        f = H._line(H.ONSHORE, y) * (sum(v for k, v in D.items() if k[3] == y and k[2] in H.US_ALLY)
+                                     / sum(v for k, v in D.items() if k[3] == y))
+        groups = {k[:2] for k in r["prod"] if k[0] != 'mine'}
+        for g in groups:
+            tot = sum(r["prod"].get(g + (q, y), 0.0) for q in B.REGIONS)
+            ua = sum(r["prod"].get(g + (q, y), 0.0) for q in H.US_ALLY)
+            assert ua >= f * tot - 1e-6 * max(tot, 1.0)
+    assert r["obj"] > res["cost"]["obj"]

@@ -64,7 +64,9 @@ is already contained output. Manufacturing scrap is lost for now; with recycling
   in `dispose`.
 - *Reserves:* extraction to date within reserves that grow (discoveries, reclassification) up to identified
   resources, also growing (`reserves`, `reserves_available`).
-- *Engine additions (0.6.0):* build lead times by stage (`lead`), recipes and co-products that change by year,
+- *Engine additions (0.6.0, 0.11.0):* build lead times by stage and, from 0.11.0, by region (`lead`), capacity
+  built in any amount (`lumpy` False) and observed years kept as observed (`observed_to`); recipes and co-products
+  that change by year,
   bounds on a route's share of its good (`route_share`), demand on any good (`extra_demand`) with `price()` reading
   back any good's marginal cost, and a unit per good (`units`).
 - *Base materials (0.7.0):* goods whose supply dwarfs energy uses (iron, phosphorus, manganese, copper,
@@ -107,6 +109,13 @@ rises with output for each region and stage, set from what the sourced costs lea
 published EV lifetimes (Xu et al. 2020: most packs last 15-20 years) almost no EV packs retire in 2023-2024, so
 manufacturing scrap and electronics are most of the recycling feed; an 8-year life, the older assumption,
 retires 100 to 200 times more.
+
+`critmin_net.horizon` (0.11.0) projects the battery network to 2040, PRELIMINARY. Demand comes from IEA's outlooks
+(stated or current policies; `src/critmin_net/data/battery_horizon/`), and 2023-2024 are calibrated to the observed
+shares. After that, capacity is built where it is cheapest: at sourced operating and capital costs, and after each
+region's own lead time (`LEAD`: US and allied plants take longer than China's). `run("onshore")` adds floors on the
+US's and allies' share of their own demand at every processing and manufacturing stage.
+`scripts/battery_horizon.py` runs all four cases.
 
 0.4.0 changed only how the model is written: across Alavi's parameters, the calibration and every hook, it
 builds the same Gurobi model as 0.3.0, by Gurobi's model fingerprint, and reports the same results and

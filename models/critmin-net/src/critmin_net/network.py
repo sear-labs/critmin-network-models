@@ -223,7 +223,12 @@ STOCKPILE = dict(
 #   cost    {stage: (prod, var, fixed)}, each {node[1:] + (year,): cost}: per unit made, per unit of capacity
 #           added, per unit (plant) built
 #   demand  {(good, region, year): final demand}
-# and takes its regions from params["regions"] and its starting capacity from params["init_cap"].
+# and takes its regions from params["regions"] and its starting capacity from params["init_cap"]. Optionally:
+#   lead    {stage: years, or {region: years}}: from a build decision to capacity (build(lead=) overrides a stage)
+#   lumpy   False: capacity is built in any amount (newc, priced by cost's `var`), not in whole plants; inv stays 0
+# params["observed_to"] (default none) keeps capacity at the starting capacity through that year whatever the lead,
+# so the years to it can be observed ones; builds are still decided from the first year (a plant decided in the first
+# year with a two-year lead serves from the third).
 LITHIUM = dict(minerals=MINERALS, stages=STAGES, goods=GOODS, mineral_of=MINERAL_OF, processes=PROCESSES,
                recipe=RECIPE, out_t=OUT_T,
                max_cap=MAX_CAP, init_capacity=INIT_CAPACITY, init_active=INIT_ACTIVE, max_new_units=MAX_NEW_UNITS,
@@ -406,7 +411,9 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     reserves: {mine node: a number (a fixed total), or {"reserve", "growth", "resources", "resource_growth"}},
       over the network's own (net["reserves"]); see reserves_available.
     life: {process: lifetime spec}, replacing the network's spec for that process (net["life"]; see LIFECYCLE).
-    lead: {stage: years}, over the network's (net["lead"]); 5 where neither says.
+    lead: {stage: years, or {region: years}}, over the network's (net["lead"]), a stage's entry replacing the
+      network's whole; 5 where neither says (for a stage or a region). A region's own lead (US and allied plants
+      taking longer to permit and build than China's) is off unless a network or a run gives one.
     route_share: {process: {"min": share, "max": share, "scope": "region" or "world"}}, shares a number or by year,
       over the network's (net["route_share"]).
     extra_demand: {(good, region, year): units}, numbers or linear expressions, added to final demand.
@@ -450,9 +457,15 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     TRADE_ONLY = set(nt.get("trade_only", ()))     # processes kept for their trade routes only (zoom())
     ROUTE_CAP = nt.get("route_caps", {})           # {process: share}: its input <= share x that good's retirement
     COLLECT = nt.get("collect", 1.0)               # share of what retires that must be taken (repurposed or recycled)
-    LEAD = {**nt.get("lead", {}), **(lead or {})}  # {stage: years from a build decision to capacity}
-    if not all(s in STG and int(v) == v and v >= 0 for s, v in LEAD.items()):
+    LEAD = {**nt.get("lead", {}), **(lead or {})}  # {stage: years, or {region: years}, from a decision to capacity}
+    if not all(s in STG and all(int(v) == v and v >= 0 for v in (y.values() if isinstance(y, dict) else [y]))
+               for s, y in LEAD.items()):
         raise ValueError(f"lead: stages must be the network's and years whole and >= 0, got {LEAD!r}")
+
+    def lead_of(n):                                # node n's lead: its stage's, or its region's at its stage
+        v = LEAD.get(n[0], 5)
+        return int(v.get(n[-1], 5) if isinstance(v, dict) else v)
+    LUMPY = nt.get("lumpy", True)                  # builds in whole plants (her model); False: any amount
     RSHARE = {**nt.get("route_share", {}), **(route_share or {})}
     if set(RSHARE) - set(nt["processes"]):
         raise ValueError(f"route_share: {sorted(set(RSHARE) - set(nt['processes']))} are not processes")
@@ -535,7 +548,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             users[g, n[-1]].append(n)
 
     flow = {s: {(k, y): m.addVar() for k in range(len(trade[s])) for y in Y} for s in STG}
-    vt = GRB.CONTINUOUS if fix_int is not None else GRB.INTEGER
+    vt = GRB.CONTINUOUS if fix_int is not None or not LUMPY else GRB.INTEGER
     prod = {(n, y): m.addVar() for n in ALL for y in Y}
     prod_nodes = set(ALL)
     for (n, y), v in prod.items():                 # trade-only processes make nothing
@@ -547,8 +560,11 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     # active units are her start count plus integer builds, so integral without being declared so
     act = {(n, y): m.addVar(vtype=vt if ACT_INTEGER else GRB.CONTINUOUS) for n in ALL for y in Y}
     every = p.get("build_every", 1)                # calibration: build decisions every `every` years
+    observed_to = p.get("observed_to", min(Y) - 1)  # capacity is the starting capacity through this year
+    if observed_to != min(Y) - 1 and observed_to not in Y:
+        raise ValueError(f"observed_to: {observed_to!r} is not a year of the model")
     for (n, y), v in inv.items():                  # (not mines: their capacity is fixed by year)
-        if (y - min(Y)) % every and n not in fixed_cap:
+        if ((y - min(Y)) % every and n not in fixed_cap) or not LUMPY:
             v.ub = 0.0
     if fix_int is not None:
         for key, v in inv.items(): v.lb = v.ub = fix_int["inv"][key]
@@ -684,10 +700,11 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         for y in Y:
             yl = yields.get((n[1], n[2]), 1.0) if n[0] == 'mine' else 1.0
             m.addConstr(prod[n, y] <= yl * cap[n, y])
-            m.addConstr(newc[n, y] <= mc * inv[n, y])
-            m.addConstr(cap[n, y] <= mc * act[n, y])
-        L = int(LEAD.get(n[0], 5))                 # years from a build decision to capacity
-        ys_n = [y for y in Y if y < min(Y) + max(L, 1)]; yw_n = [y for y in Y if y >= min(Y) + max(L, 1)]
+            if LUMPY:                              # whole plants; otherwise newc alone is the build
+                m.addConstr(newc[n, y] <= mc * inv[n, y])
+                m.addConstr(cap[n, y] <= mc * act[n, y])
+        L = lead_of(n)                             # years from a build decision to capacity
+        ys_n = [y for y in Y if y < min(Y) + max(L, 1) or y <= observed_to]; yw_n = [y for y in Y if y not in ys_n]
         for y in yw_n:
             m.addConstr(act[n, y] == act[n, y - 1] + inv[n, y - L])
             m.addConstr(cap[n, y] <= newc[n, y - L] + cap[n, y - 1])
@@ -698,7 +715,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
             if n not in fixed_cap:
                 m.addConstr(cap[n, y] == (nt["init_capacity"][n[0]] if init_cap is None
                                           else by_year(init_cap.get(n, 0.0), y)))
-    for s in STG:
+    for s in STG if LUMPY else ():
         for y in Y:
             m.addConstr(quicksum(inv[n, y] for n in N[s]) <= nt["max_new_units"] * every)   # her yearly limit, per build year
     # calibration: from 2031 each region's capacity at a stage (by chemistry for cathode) grows by at most
@@ -858,7 +875,7 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
         if q.size():
             obj = obj + 0.5 * gamma * q * q
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
-             ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
+             ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock, cap=cap, newc=newc,
              hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire,
              bal_all=bal_all, short_cap_all=short_cap_all, buy=buy, value=embedded)
     return obj, h

@@ -186,6 +186,77 @@ def test_lead_time_decides_when_capacity_can_grow():
         _status(net, params, lead={'cell': 1.5})
 
 
+def _jump():
+    """The toy with 10 GWh of cell capacity in each region and the US's EV demand jumping to 35 GWh in 2025."""
+    net, params = toy()
+    for p in net["processes"]:
+        if p[0] == 'cell':
+            for r in R:
+                params["init_cap"][p + (r,)] = 10.0
+    net["demand"] = {**net["demand"], **{(('use', 'ev'), 'US', y): 35.0 for y in (2025, 2026)}}
+    return net, params
+
+
+def test_lead_time_by_region():
+    """0.11.0. The jump in 2025 with cells' lead by region: three years in the US, one in China. The US cannot add
+    capacity by 2025 but China can, so the jump is met with China's cells; with three years in both it cannot be. A
+    region the dict leaves out takes 5 years."""
+    net, params = _jump()
+    net["max_new_units"] = 10
+    st, P, _ = _status(net, params, lead={'cell': {'US': 3, 'CHN': 1}})
+    assert st == gp.GRB.OPTIMAL
+    cells = {r: sum(v for (n, y), v in P.items() if n[0] == 'cell' and n[-1] == r and y == 2025) for r in R}
+    assert cells['US'] <= 10.0 + 1e-6 and cells['CHN'] > 20.0
+    for lead in ({'US': 3, 'CHN': 3}, {'US': 3}):                     # the second: China at the default 5
+        st, _, _ = _status(net, params, lead={'cell': lead})
+        assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)
+    with pytest.raises(ValueError):
+        _status(net, params, lead={'cell': {'US': 1.5}})
+
+
+def _solve_h(net, params, **kw):
+    m = gp.Model(); m.Params.OutputFlag = 0
+    obj, h = N.build(m, params, net=net, **kw)
+    m.setObjective(obj, gp.GRB.MINIMIZE); m.optimize()
+    return m, h
+
+
+def test_continuous_builds_and_observed_to():
+    """0.11.0. With lumpy False, capacity is built in any amount and no plants (max_new_units 0 forbids any build
+    otherwise), at cost's `var` per unit added. observed_to 2024 keeps 2023 and 2024 at the starting capacity even
+    with a one-year lead: a jump in 2024 cannot be met, while without it it can; the jump in 2025 can be met either
+    way (built in 2024 with the one-year lead, or in 2023 with a two-year one)."""
+    net, params = _jump()
+    st, _, _ = _status(net, params, lead={'cell': 1})                 # whole plants, and none allowed
+    assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)
+    net["lumpy"] = False
+    m0, h0 = _solve_h(net, params, lead={'cell': 1})
+    assert m0.Status == gp.GRB.OPTIMAL and m0.IsMIP == 0
+    assert all(v.UB == 0.0 for v in h0["inv"].values())
+    pc, vc, fc = net["cost"]['cell']
+    net["cost"]['cell'] = (pc, {k: 3.0 for k in vc}, fc)
+    m3, h3 = _solve_h(net, params, lead={'cell': 1})
+    built3 = sum(v.X for (n, y), v in h3["newc"].items() if n[0] == 'cell')
+    peak = max(sum(v.X for (n, yy), v in h3["prod"].items() if n[0] == 'cell' and yy == y) for y in Y)
+    assert peak > 30.0 and built3 == pytest.approx(peak - 20.0, rel=1e-6)   # priced: only what the peak needs
+    built0 = sum(v.X for (n, y), v in h0["newc"].items() if n[0] == 'cell')
+    assert m0.ObjVal - 1e-6 <= m3.ObjVal - 3.0 * built3                # the build is charged in the objective
+    assert m3.ObjVal <= m0.ObjVal + 3.0 * built0 + 1e-6
+    net["demand"] = {**net["demand"], (('use', 'ev'), 'US', 2024): 35.0}
+    st, _, _ = _status(net, params, lead={'cell': 1})                 # 2024 can grow
+    assert st == gp.GRB.OPTIMAL
+    st, _, _ = _status(net, dict(params, observed_to=2024), lead={'cell': 1})
+    assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)
+    net["demand"].pop((('use', 'ev'), 'US', 2024))
+    for L in (1, 2):                                                  # decided in 2024 or in 2023, online in 2025
+        st, _, _ = _status(net, dict(params, observed_to=2024), lead={'cell': L})
+        assert st == gp.GRB.OPTIMAL
+    st, _, _ = _status(net, dict(params, observed_to=2024), lead={'cell': 3})
+    assert st in (gp.GRB.INFEASIBLE, gp.GRB.INF_OR_UNBD)
+    with pytest.raises(ValueError):
+        _status(net, dict(params, observed_to=2030), lead={'cell': 1})
+
+
 def test_recipes_by_year():
     """Lithium per GWh of cells halves from 2025 (10 GWh per kt, then 20): cells take half as much lithium."""
     net, params = toy()
@@ -342,3 +413,4 @@ def test_zoom_reproduces_the_whole_network():
     bought = {(r, y): h1["buy"][LI, r, y].X for r in R for y in Y}
     assert sum(bought.values()) > 0
     assert all(bought[r, y] <= info["cap"][LI][r][y] + 1e-9 for r in R for y in Y)
+
