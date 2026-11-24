@@ -63,7 +63,7 @@ BASE = ['Mn', 'Fe', 'P']                         # base materials, bought at a p
 USES = ['ev', 'storage', 'electronics', 'other']
 STAGES = ['base', 'mine', 'refine', 'pcam', 'anode', 'cath', 'cell', 'use', 'eol', 'scrap', 'shred']
 HEADROOM = 1.20                                  # capacity over observed output, as in network.calibrated()
-TIE = 0.001                                      # calibrate()'s slope for regions with no wedge, USD per kg or kWh
+TIE = 0.01                                       # calibrate()'s slope for regions with no wedge, USD per kg or kWh
 OPEN = 1e9                                       # capacity where none is modelled (end uses, shredding)
 FEPO4_PER_LI = (55.845 + 30.974 + 4 * 15.999) / 6.94   # kg FePO4 per kg Li in LiFePO4 (standard atomic weights)
 IN_FEPO4 = {'Fe': 55.845 / (55.845 + 30.974 + 4 * 15.999),  # mass share of iron and phosphorus in FePO4
@@ -127,11 +127,16 @@ def costs():
     the source rows it comes from in sources_upstream.csv and sources_midstream.csv, and the arithmetic). Every stage's
     own cost per unit made: purchased inputs the network models are counted where they are made, not here.
 
-    mine_<m>         USD per kg contained, by region, from each region's operations (lithium: Chinese lepidolite,
-                     Australian operations' median, Brazilian hard rock; nickel: Indonesian HPAL to MHP, Australian and
-                     US sulphide, IEA's all-in cost for China; graphite: Mozambique, Canadian and US studies, a Chinese
-                     price). Cobalt is a by-product with no cost of its own: priced at hydroxide payables x LME cobalt.
-    refine_<m>       conversion to battery grade in China, feed excluded; other regions by the 'chem' ratio.
+    mine_<m>         USD per kg contained, by region, from each region's operations (lithium: each region's mix of
+                     resources by output, China's lepidolite, brine and spodumene from its miners' annual reports, the
+                     rest of the world's Chilean and Argentine brine and hard rock, Australian operations' median, a US
+                     study and Silver Peak, with an integrated cost split as the integrated cost less the region's
+                     conversion; nickel: Indonesian HPAL to MHP, Australian and US sulphide, IEA's all-in cost for
+                     China; graphite: Mozambique, Canadian and US studies, a Chinese price). Cobalt is a by-product with
+                     no cost of its own: priced at hydroxide payables x LME cobalt.
+    refine_<m>       conversion to battery grade in China, feed excluded; other regions by the 'chem' ratio (lithium:
+                     every region from operations or studies: a Chinese converter, a Chilean brine plant, US and
+                     German studies).
     pcam_nmc, cath,  the Stanford GSB model's labour and electricity per kWh in China, the US and Korea (the allies),
     cell_proc        excluding capital and materials; NMC811's, used for every chemistry.
     cell_materials   separator, electrolyte, foils and casing per kWh (bought; the same everywhere).
@@ -601,7 +606,9 @@ def calibrate(inputs=None, env=None, tie=TIE, **kw):
     marginal cost at its target is its sourced cost plus its wedge plus `tie`: step 1's plan, without the holds.
     `tie` (USD per kg or kWh) gives the regions with no wedge a slope too, so regions with equal costs (cobalt
     mines, priced alike everywhere) split in proportion to their targets rather than arbitrarily. Prices are step
-    1's plus about `tie`, except where step 1's price is not unique (a region that only imports the good).
+    1's plus about `tie` a stage, except where step 1's price is not unique (a region that only imports the good).
+    A smaller `tie` leaves those splits nearly flat, so the solver's price tolerance moves them (at 0.001, by 0.5%
+    between the whole network and a zoomed one; at TIE, 0.01, by 0.01%, the solver's floor).
 
     For 2023 and 2024 only: a projection needs a rule for gamma as capacity grows (the horizon work).
     kw: network()'s overrides. Returns dict(quad: network()'s `quad`, target and wedge: {((stage, key), region,

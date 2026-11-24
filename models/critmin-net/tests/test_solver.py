@@ -345,7 +345,7 @@ def test_battery_calibration_reproduces_observed_shares(battery_cal, battery_def
 
 def test_zoom_battery_calibrated(battery_cal):
     """With calibrate()'s rising costs the plan is unique, so the battery network zoomed on lithium matches the whole
-    one node by node with no perturbation, to the solver's tolerance."""
+    one node by node with no perturbation, to the solver's tolerance (0.01% at TIE; 0.1% asserted)."""
     from critmin_net import network as N
     B, inp, cal = battery_cal
     net, params, bkw, _ = B.network(inp, quad=cal["quad"])
@@ -355,7 +355,7 @@ def test_zoom_battery_calibrated(battery_cal):
     top = max(v.X for v in h0["prod"].values())
     for (n, y), v in h1["prod"].items():
         if n[:-1] not in z["trade_only"]:
-            assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-5 * top)
+            assert v.X == pytest.approx(h0["prod"][n, y].X, rel=1e-3, abs=1e-6 * top)
 
 
 def test_battery_run_with_focus():
@@ -370,3 +370,4 @@ def test_battery_run_with_focus():
         assert li["mined"]['Li', y] == pytest.approx(whole["mined"]['Li', y], rel=1e-6)
     with pytest.raises(ValueError):
         B.zoom(['Li', 'Ni', 'Co', 'Mn', 'graphite'])
+

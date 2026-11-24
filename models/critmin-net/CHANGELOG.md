@@ -3,6 +3,41 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.10.0 (2026-11-23)
+
+Lithium's battery-network costs re-sourced: the calibration's largest wedges (0.9.0) were lithium's, and China's mining
+cost was a 2019 concentrate price. The lithium model is unchanged (12 cases, identical fingerprints, results and
+prices).
+- `data/battery_costs/`: 136 new source rows (U181-U316) from three searches: China's lithium mining (its miners'
+  annual reports and investor-relations records), mining in the rest of the world and the US (SEC and NI 43-101
+  technical reports, company results), and conversion (a Chinese converter's annual report, studies, NRGI). The 29
+  rows the selection names were checked against their sources: all confirmed; the check's notes on basis (CIF or
+  plant gate, what is excluded, the denominator) are in the rows and in `verification.csv`.
+- Refining, USD per kg Li: China 15.6 (2023) and 16.4 (2024), spodumene to lithium salt excluding concentrate
+  (Chengxin; CIFCO and NRGI agree); the rest of the world 16.7 (Albemarle's La Negra brine plant, Chile); the US 17.9
+  (Piedmont Tennessee study); the allies 28.7 (Rock Tech Guben study). Each region's own, no longer China's by a ratio.
+- Mining, USD per kg Li, as each region's mix of resources by output, an integrated cost split as the integrated cost
+  less the region's conversion (so mining plus refining is what the operation costs): China 18.8 (2023) and 14.8
+  (2024), from lepidolite (Yongxing), brine (Qinghai Salt Lake, Zangge) and spodumene (Rongjie's Jiajika mine) at
+  Fastmarkets' 2023 split (was 32.3); the rest of the world 13.0 and 11.4, from Chilean brine (Albemarle Atacama's
+  salar costs, 7.55), Argentine brine (Olaroz, Cauchari-Olaroz) and hard rock (Sigma; no Zimbabwe mine cost was
+  found) at USGS output (was 14.8, one Brazilian mine); the US 16.9, from Thacker Pass and Silver Peak (was 4.8,
+  Thacker Pass's mining area alone). The allies' Australian median is unchanged.
+- What it shows (PRELIMINARY): the battery network costs 142,530 M$ (was 143,264), nothing unmet. Calibrated, lithium
+  mining's wedges fall to 6.1 USD per kg in the rest of the world (was 16.9), 3.0 in China and under 0.05 in the
+  allies (was 14.1). Refining's stay large (China 12.1, the rest of the world 11.4, the US 9.9): the allies' study
+  cost, 28.7, is the marginal refiner's, and the allies refined 2.5% of lithium in 2024 at that cost or more (IGO's
+  Kwinana reports cash costs of 108-183 while ramping up), so the wedge measures plants run at a loss, not a missing
+  cost.
+- `battery.TIE` 0.001 -> 0.01 USD per kg or kWh. With the new costs, splits that only `TIE` pins (pCAM between China
+  and the allies) moved by up to 0.5% between the whole calibrated network and a zoomed one, the solver's price
+  tolerance divided by a nearly flat slope; at 0.01 they match to 0.01% (the solver's floor; 0.05 does no better), and
+  prices rise by about 0.05 USD per kg or kWh (0.1%). The calibrated zoom test asserts 0.1% node by node. Wedges are
+  step 1's, so `TIE` does not change them.
+- Still weak: China's costs are accounting cost of sales (with depreciation) where Australia's are cash costs;
+  lepidolite's dearer conversion sits in China's mining share; Zimbabwe, the rest of the world's second producer, has no
+  mine cost.
+
 ## 0.9.0 (2026-11-23)
 
 The battery network calibrated to the observed regional shares (docs/networks-outline.md 3.1). Off by default: the
