@@ -3,6 +3,32 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.9.0 (2026-11-23)
+
+The battery network calibrated to the observed regional shares (docs/networks-outline.md 3.1). Off by default: the
+lithium model is unchanged (12 cases, identical fingerprints, results and prices), and so is the battery network
+uncalibrated.
+- `battery.calibrate()`: positive mathematical programming (Howitt 1995). Step 1 holds each region's output at each
+  stage with an observed regional split (mining, primary refining, anode, pCAM and cathode by chemistry, cells) at
+  its observed share of the model's output, recomputing the targets until the totals settle (two solves); each
+  hold's dual, its wedge, is what the sourced costs leave unexplained. Step 2 replaces the holds with a cost rising
+  with output, 0.5 * gamma * x^2, gamma = (wedge + `TIE`) / target, which reproduces step 1's plan without them.
+  `TIE` (0.001 USD per kg or kWh) splits regions with equal costs (cobalt mines) by their observed shares. Prices are
+  step 1's to within a few thousandths of a dollar, except in regions that only import a good, where the LP's price
+  was not unique (up to 0.3 USD per kg higher).
+- `run(calibrated=True)` and `zoom(..., calibrated=True)`; `network(..., quad=)` takes calibrate()'s costs.
+- Engine: `build(..., quad_cost=[(nodes, year, gamma)])`, a cost of 0.5 * gamma * (the nodes' output)^2 per term.
+  None by default. zoom() carries it: zoomed on lithium, or on nickel and cobalt, the calibrated battery network
+  matches the whole one node by node to the solver's tolerance (2e-6), with no perturbation, since the rising costs
+  make the plan unique.
+- What it shows (PRELIMINARY): every share matches, each region and year (to 1e-4), with nothing unmet; cells in 2024
+  are China 85%, the allies 9% and the US 6% (100% China uncalibrated). The largest wedges, USD per kg contained, 2024:
+  lithium mining in the rest of the world 16.9 and in the allies 14.1 (China's mining cost is roughly a 2019
+  concentrate price, 32.3, so these largely measure that number), lithium refining in China 13.4, nickel mining in the
+  rest of the world 5.4, cobalt refining in China 4.7; cells in China 3.7 USD per kWh. A large wedge marks a cost
+  worth re-sourcing or a policy the network leaves out.
+- For 2023 and 2024 only: projecting needs a rule for gamma as capacity grows (the horizon work).
+
 ## 0.8.0 (2026-11-23)
 
 Battery network costs, sourced (docs/networks-outline.md 3.1: "real costs"). The lithium model is unchanged (12 cases,

@@ -44,6 +44,11 @@ graphite (petroleum coke, not modelled), sharing each region's anode capacity, a
 recycling; portable electronics are at low-nickel NMC's intensity (their LiCoO2 is not modelled) and "other"
 applications at the world EV mix; histories before 2023 use 2023's chemistry mix; capacity is fixed in every year
 at the observed level times HEADROOM, so nothing is built.
+
+Calibration (calibrate(); run(calibrated=True)): at sourced costs the cheapest region fills its headroom (China makes
+every cell in 2024). calibrate() adds, by positive mathematical programming, a cost rising with output to each region
+at each stage with an observed regional split, so the network reproduces the observed shares; the wedges it finds
+are what the sourced costs leave unexplained. Off by default.
 """
 import pandas as pd
 
@@ -58,6 +63,7 @@ BASE = ['Mn', 'Fe', 'P']                         # base materials, bought at a p
 USES = ['ev', 'storage', 'electronics', 'other']
 STAGES = ['base', 'mine', 'refine', 'pcam', 'anode', 'cath', 'cell', 'use', 'eol', 'scrap', 'shred']
 HEADROOM = 1.20                                  # capacity over observed output, as in network.calibrated()
+TIE = 0.001                                      # calibrate()'s slope for regions with no wedge, USD per kg or kWh
 OPEN = 1e9                                       # capacity where none is modelled (end uses, shredding)
 FEPO4_PER_LI = (55.845 + 30.974 + 4 * 15.999) / 6.94   # kg FePO4 per kg Li in LiFePO4 (standard atomic weights)
 IN_FEPO4 = {'Fe': 55.845 / (55.845 + 30.974 + 4 * 15.999),  # mass share of iron and phosphorus in FePO4
@@ -240,7 +246,7 @@ def sets(intensity, lc=None):
                 collect=lc["collect"], base={('base', x): {} for x in BASE})
 
 
-def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=None):
+def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=None, quad=None):
     """(net, params, build options, need) for build() from the inputs (load() makes them).
 
     inputs: intensity {chem: {mineral: kg/kWh}}; demand {(use, chem, region, year): GWh}; history {(use, chem,
@@ -250,6 +256,7 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     reserves {(mineral, region): spec}; costs (costs()); losses; lifecycle (LIFECYCLE's keys).
     losses, life ({use: spec, or 'second_life': spec}), repurpose and collect override the inputs' for one run;
     base {material: spec} replaces a base material's spec (network's base-materials notes: a price, caps).
+    quad: calibrate()'s quadratic costs (build()'s quad_cost); None for none.
     need is {(mineral, year): kt}, demand x intensity over every end use, before losses.
     """
     lc = {**LIFECYCLE, **inputs.get("lifecycle", {})}
@@ -326,7 +333,10 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
     params = dict(regions=list(REGIONS), alpha={r: 1.0 for r in REGIONS}, import_coef={r: 1.0 for r in REGIONS},
                   region_share={r: 0.0 for r in REGIONS}, alpha_stage=alpha_stage, init_cap=init_cap,
                   ship_value_share=N.SHIP_VALUE_SHARE, shortage_mult=N.SHORTAGE_MULT, build_every=1)
-    return net, params, dict(limits=limits), need
+    bkw = dict(limits=limits)
+    if quad:
+        bkw["quad_cost"] = quad
+    return net, params, bkw, need
 
 
 def _read(name):
@@ -561,25 +571,115 @@ def load():
                 share=share, reserves=reserves, costs=costs(), losses=dict(LOSSES), lifecycle=dict(LIFECYCLE))
 
 
-def zoom(focus, inputs=None, env=None, caps=True, **kw):
+def _group(n):
+    """The observed-share group of node n (calibrate()): (stage, key), or None where no regional split is observed."""
+    s = n[0]
+    if s == 'mine':
+        return ('mine', n[1])
+    if s == 'refine' and n[1] == n[2]:
+        return ('refine', n[1])
+    if s == 'anode':
+        return ('anode', 'anode')
+    if s in ('pcam', 'cath'):
+        return (s, n[-2])
+    if s == 'cell':
+        return ('cell', 'cell')
+    return None
+
+
+def calibrate(inputs=None, env=None, tie=TIE, **kw):
+    """Calibrate the network to the observed regional shares, by positive mathematical programming (Howitt 1995).
+
+    Each stage with an observed regional split (mining, primary refining, anode, pCAM and cathode by chemistry, and
+    cells: the shares that set capacity in network(); load() gives their sources) has a target in each region and
+    year: the region's observed share of what the model makes at that stage. Step 1 solves with each region's output
+    held at or below its target (integers fixed from an unheld solve), and the targets are recomputed from that
+    solve's totals until they stop moving (they move a little as output shifts between regions). The dual of each
+    hold, its wedge, is what the region's sourced costs leave unexplained: how much cheaper per unit it is than its
+    observed share implies (policy, contracts, logistics, or a cost wrongly sourced). Step 2 replaces each hold with
+    a cost that rises with output, 0.5 * gamma * x^2 with gamma = (wedge + tie) / target, so that each region's
+    marginal cost at its target is its sourced cost plus its wedge plus `tie`: step 1's plan, without the holds.
+    `tie` (USD per kg or kWh) gives the regions with no wedge a slope too, so regions with equal costs (cobalt
+    mines, priced alike everywhere) split in proportion to their targets rather than arbitrarily. Prices are step
+    1's plus about `tie`, except where step 1's price is not unique (a region that only imports the good).
+
+    For 2023 and 2024 only: a projection needs a rule for gamma as capacity grows (the horizon work).
+    kw: network()'s overrides. Returns dict(quad: network()'s `quad`, target and wedge: {((stage, key), region,
+    year): units, and USD per unit}, iterations: step-1 solves).
+    """
+    import gurobipy as gp
+    from gurobipy import GRB, quicksum
+    net, params, bkw, _ = network(inputs or load(), **kw)
+    cap, lim = params["init_cap"], bkw["limits"]
+    G = {}
+    for p in net["processes"]:
+        for r in REGIONS:
+            g = _group(p + (r,))
+            if g:
+                for y in YEARS:
+                    G.setdefault((g, r, y), []).append(p + (r,))
+    obs = {k: (lim[('anode', k[1])][k[2]] if k[0][0] == 'anode' else sum(cap[n][k[2]] for n in ns)) / HEADROOM
+           for k, ns in G.items()}
+    otot = {}
+    for (g, r, y), v in obs.items():
+        otot[g, y] = otot.get((g, y), 0.0) + v
+
+    def solve(fix=None, target=None):
+        m = gp.Model(env=env); m.Params.OutputFlag = 0
+        obj, h = N.build(m, params, net=net, fix_int=fix, **bkw)
+        hold = {k: m.addConstr(quicksum(h["prod"][n, k[2]] for n in ns) <= target[k] * (1 + 1e-9) + 1e-9)
+                for k, ns in G.items()} if target else {}
+        m.setObjective(obj, GRB.MINIMIZE); m.optimize()
+        if m.Status != GRB.OPTIMAL:
+            raise RuntimeError(f"calibrate: a solve ended with status {m.Status}")
+        tot = {}
+        for (g, r, y), ns in G.items():
+            tot[g, y] = tot.get((g, y), 0.0) + sum(h["prod"][n, y].X for n in ns)
+        ints = dict(inv={k: round(v.X) for k, v in h["inv"].items()}, act={k: round(v.X) for k, v in h["act"].items()})
+        return {k: max(0.0, -c.Pi) for k, c in hold.items()}, tot, ints
+
+    _, tot, fix = solve()
+    for it in range(1, 21):
+        target = {k: obs[k] / otot[k[0], k[2]] * tot[k[0], k[2]] if otot[k[0], k[2]] else 0.0 for k in G}
+        wedge, t1, _ = solve(fix, target)
+        moved = max(abs(t1[k] - tot[k]) / max(tot[k], 1e-9) for k in t1)
+        tot = t1
+        if moved < 1e-7:
+            break
+    else:
+        raise RuntimeError("calibrate: the targets did not settle in 20 solves")
+    quad = [(G[k], k[2], (wedge[k] + tie) / target[k]) for k in G if target[k] > 1e-9]
+    return dict(quad=quad, target=target, wedge=wedge, iterations=it)
+
+
+def zoom(focus, inputs=None, env=None, caps=True, calibrated=False, **kw):
     """The network zoomed in on the minerals in `focus`: every other mineral is cut at its battery-grade good (CUT)
     and bought at its price in the whole network (network.zoom: price, value and, with caps, quantities), so the
-    focus minerals' chains are the whole network's. kw: network()'s overrides.
-    Returns (net, params, build options, need, info), info from network.zoom."""
+    focus minerals' chains are the whole network's. calibrated: with calibrate()'s costs (in both).
+    kw: network()'s overrides. Returns (net, params, build options, need, info), info from network.zoom."""
     if not focus or set(focus) - set(MINERALS) or set(focus) == set(MINERALS):
         raise ValueError(f"focus: some, not all, of {MINERALS}")
-    net, params, bkw, need = network(inputs or load(), **kw)
+    inputs = inputs or load()
+    if calibrated and "quad" not in kw:
+        kw["quad"] = calibrate(inputs, env, **kw)["quad"]
+    net, params, bkw, need = network(inputs, **kw)
     z, info = N.zoom([CUT[m] for m in MINERALS if m not in focus], params, net=net, caps=caps, env=env, **bkw)
     return z, params, bkw, need, info
 
 
-def run(inputs=None, env=None, focus=None, **kw):
+def run(inputs=None, env=None, focus=None, calibrated=False, **kw):
     """Solve and summarise: per mineral and year, what is mined, bought (base materials), refined (primary and recycled) and taken by recipes
     (kt), the batteries' need from demand x intensity, unmet demand, each region's share of each stage, the trade by
     stage, and the lifecycle: retired, repurposed and shredded GWh, by year. focus: zoom in on these minerals
-    (zoom(); the others' cut goods are reported as bought). kw: network()'s overrides."""
+    (zoom(); the others' cut goods are reported as bought). calibrated: with calibrate()'s costs, and its wedges
+    reported. kw: network()'s overrides."""
     import gurobipy as gp
     from gurobipy import GRB
+    inputs = inputs or load()
+    cal = None
+    if calibrated and "quad" not in kw:
+        cal = calibrate(inputs, env, **kw)
+        kw["quad"] = cal["quad"]
     if focus:
         net, params, bkw, need, _ = zoom(focus, inputs, env, **kw)
     else:
@@ -592,7 +692,7 @@ def run(inputs=None, env=None, focus=None, **kw):
     prod, cons, flow, trade = h["prod"], h["cons"], h["flow"], h["trade"]
     out = dict(status=m.Status, obj=m.ObjVal, need=need, mined={}, bought={}, refined={}, recycled={}, used={}, share={},
                trade={}, short={k: v.X for k, v in h["short"].items() if v.X > 1e-6},
-               retired={}, repurposed={}, shredded={})
+               retired={}, repurposed={}, shredded={}, wedge=cal["wedge"] if cal else {})
     for (n, y), v in prod.items():
         if n[0] == 'mine':
             out["mined"][n[1], y] = out["mined"].get((n[1], y), 0.0) + v.X

@@ -394,7 +394,7 @@ def data(regions=None):
 
 def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cobalt=False,
           ev_scale=1.0, fix_int=None, limits=None, stockpile=None, net=None, losses=None, reserves=None, life=None,
-          lead=None, route_share=None, extra_demand=None, base=None):
+          lead=None, route_share=None, extra_demand=None, base=None, quad_cost=None):
     """Add the network to model m; returns (objective expression, handles).
 
     extra_cell_demand: {(cell tech, region, year): GWh}, numbers or linear expressions.
@@ -411,6 +411,9 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
       over the network's (net["route_share"]).
     extra_demand: {(good, region, year): units}, numbers or linear expressions, added to final demand.
     base: {good: spec}, replacing the network's spec for that good (net["base"]; see the base-materials notes by LITHIUM).
+    quad_cost: [(nodes, year, gamma)], each adding 0.5 * gamma * (the nodes' production that year)^2 to the objective:
+      a cost that rises with output, as a calibration sets it (battery.calibrate()). Nodes not in the network are
+      left out, and a term with none left is dropped. None (the default) adds nothing.
     Recipe and co-product coefficients may be numbers or {year: number} (intensities that change over time).
     """
     p = params or NOTEBOOK
@@ -850,6 +853,10 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
     hold_cost = (quicksum(sp["hold_share"] * embedded(st, g, y) * v for (st, g, r, y), v in stock.items())
                  if stock else 0)
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
+    for nodes, y, gamma in quad_cost or ():
+        q = quicksum(prod[n, y] for n in nodes if (n, y) in prod)
+        if q.size():
+            obj = obj + 0.5 * gamma * q * q
     h = dict(Y=Y, R=R, region_cost=region_cost, flow=flow, trade=trade, inv=inv, act=act, prod=prod,
              ALL=ALL, cell_bal=cell_bal, short=short, short_cap=short_cap, over=over, stock=stock,
              hold_cost=hold_cost, net=nt, N=N, cons=cons, losses=LOSS, retire=retire,

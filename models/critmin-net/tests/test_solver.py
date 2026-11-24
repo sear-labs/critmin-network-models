@@ -311,6 +311,53 @@ def test_zoom_battery_on_lithium():
     assert m2.ObjVal == pytest.approx(m1.ObjVal, rel=1e-9)
 
 
+@pytest.fixture(scope="module")
+def battery_cal():
+    from critmin_net import battery as B
+    inp = B.load()
+    return B, inp, B.calibrate(inp)
+
+
+def test_battery_calibration_reproduces_observed_shares(battery_cal, battery_default):
+    """calibrate(): every stage with an observed regional split matches it in each region and year, to 1e-4 of the
+    stage's output, with nothing unmet; uncalibrated, China makes every cell in 2024."""
+    from critmin_net import network as N
+    B, inp, cal = battery_cal
+    assert cal["iterations"] <= 5 and min(cal["wedge"].values()) >= 0.0
+    net, params, bkw, _ = B.network(inp, quad=cal["quad"])
+    m, h = _solve_h(N, net, params, **bkw)
+    assert all(v.X < 1e-6 for v in h["short"].values())
+    out, tot, ttot = {}, {}, {}
+    for (n, y), v in h["prod"].items():
+        g = B._group(n)
+        if g:
+            out[g, n[-1], y] = out.get((g, n[-1], y), 0.0) + v.X
+            tot[g, y] = tot.get((g, y), 0.0) + v.X
+    for (g, r, y), x in cal["target"].items():
+        ttot[g, y] = ttot.get((g, y), 0.0) + x
+    assert set(out) == set(cal["target"])
+    for (g, r, y), x in out.items():
+        if ttot[g, y] > 0:
+            assert x / tot[g, y] == pytest.approx(cal["target"][g, r, y] / ttot[g, y], abs=1e-4)
+    assert out[('cell', 'cell'), 'CHN', 2024] / tot[('cell', 'cell'), 2024] < 0.9
+    assert battery_default[2]["share"]['cell', 'CHN', 2024] == pytest.approx(1.0)
+
+
+def test_zoom_battery_calibrated(battery_cal):
+    """With calibrate()'s rising costs the plan is unique, so the battery network zoomed on lithium matches the whole
+    one node by node with no perturbation, to the solver's tolerance."""
+    from critmin_net import network as N
+    B, inp, cal = battery_cal
+    net, params, bkw, _ = B.network(inp, quad=cal["quad"])
+    z, _ = N.zoom([B.CUT[m] for m in ('Ni', 'Co', 'Mn', 'graphite')], params, net=net, **bkw)
+    m0, h0 = _solve_h(N, net, params, **bkw)
+    m1, h1 = _solve_h(N, z, params, **bkw)
+    top = max(v.X for v in h0["prod"].values())
+    for (n, y), v in h1["prod"].items():
+        if n[:-1] not in z["trade_only"]:
+            assert v.X == pytest.approx(h0["prod"][n, y].X, abs=1e-5 * top)
+
+
 def test_battery_run_with_focus():
     """run(focus=...) zooms: only the focus minerals are mined, the others' battery-grade goods are bought, and the
     lithium mined each year is the whole network's (it may sit in other regions where plans tie)."""

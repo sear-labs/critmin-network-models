@@ -100,7 +100,10 @@ defaults are chosen from published tables there. Costs are sourced too (0.8.0; `
 USD), from company reports, feasibility studies, the Stanford GSB cost model, IEA and others; PRELIMINARY, since
 several are price spreads or single projects (`selected.csv` says which, and how each was derived). `python -m critmin_net.battery`
 solves it; `run(life=..., repurpose=..., collect=..., losses=..., base=...)` changes a default for one run, and
-`run(focus=['Li'])` zooms in on some minerals (`zoom()`: the others bought at their battery-grade good, `CUT`). With the
+`run(focus=['Li'])` zooms in on some minerals (`zoom()`: the others bought at their battery-grade good, `CUT`).
+At sourced costs the cheapest region fills its headroom (China makes every cell in 2024); `run(calibrated=True)`
+reproduces the observed regional shares instead (0.9.0, `calibrate()`: positive mathematical programming, a cost that
+rises with output for each region and stage, set from what the sourced costs leave unexplained). With the
 published EV lifetimes (Xu et al. 2020: most packs last 15-20 years) almost no EV packs retire in 2023-2024, so
 manufacturing scrap and electronics are most of the recycling feed; an 8-year life, the older assumption,
 retires 100 to 200 times more.
