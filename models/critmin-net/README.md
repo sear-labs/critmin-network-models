@@ -20,7 +20,7 @@ Cite the release you used (the repository's `CITATION.cff`; GitHub's "Cite this 
 @software{jones_critmin_network_models,
   author  = {Jones, Erick C., Jr.},
   title   = {critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)},
-  version = {0.16.0},
+  version = {0.16.1},
   year    = {2026},
   url     = {https://github.com/sear-labs/critmin-network-models}
 }

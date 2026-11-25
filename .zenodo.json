@@ -1,0 +1,22 @@
+{
+  "title": "critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)",
+  "upload_type": "software",
+  "description": "critmin-net, the SEAR Lab's critical-minerals supply-chain network model: the lithium-ion battery supply chain to 2040 (mining, refining, precursor, anode and cathode material, cells, end uses and recycling) in five regions with trade between them, every market a calibrated supply, demand or cost curve, with US tariffs, 45X, China's export controls and the DRC's cobalt quota. Calibrated to 2023-2024 and checked against 2025. Results are preliminary. Code MIT; data (models/critmin-net/src/critmin_net/data/) CC BY 4.0, every number with its source.",
+  "creators": [
+    {
+      "name": "Jones, Erick C., Jr.",
+      "affiliation": "University of Texas at Arlington",
+      "orcid": "0000-0003-0559-4699"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "Alavi, Sara",
+      "affiliation": "University of Texas at Arlington",
+      "type": "Researcher"
+    }
+  ],
+  "license": "mit-license",
+  "access_right": "open",
+  "keywords": ["critical minerals", "battery supply chain", "network optimization", "lithium-ion batteries", "recycling"]
+}

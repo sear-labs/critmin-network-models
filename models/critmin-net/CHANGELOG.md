@@ -3,6 +3,12 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.16.1 (2026-11-25)
+
+- The repository is public (Jones, 2026-11-25) and archived on Zenodo: `.zenodo.json` gives the deposit's metadata
+  (MIT, open access, the author's ORCID and affiliation), and each GitHub release now makes a Zenodo version with its
+  own DOI. No model change.
+
 ## 0.16.0 (2026-11-25)
 
 **The lithium network is retired.** critmin-net began as a port of Alavi's six-stage lithium network; the battery
