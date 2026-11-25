@@ -8,7 +8,7 @@ version and says why here.
 - **`horizon.build(m, ...)`** adds the horizon to a model another model can share (an energy model, in a joint
   solve): returns (objective, handles, info). On top of the horizon's own options it takes `extra_demand` (another
   model's purchases, as numbers or linear expressions), `limits` (the lower ceiling wins), `cap_max` (replaces a node's
-  ceiling) and `tariffs` (the higher rate wins). `run()` now builds through it; its results are unchanged (the same
+  ceiling) and `tariffs` (the higher rate wins; a new arc has no tariff in years not given). `run()` now builds through it; its results are unchanged (the same
   objectives and, at a fixed `PYTHONHASHSEED`, byte-identical export tables).
 - **Ties depend on Python's hash seed.** Where the horizon has equally cheap plans, which one the solver returns can
   change from one Python process to the next (set iteration order), with the objective unchanged. Set

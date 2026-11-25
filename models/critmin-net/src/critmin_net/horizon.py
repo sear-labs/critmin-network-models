@@ -1177,7 +1177,7 @@ def build(m, scenario="cost", inputs=None, cal=None, years=None, floor=None, kno
     if tariffs:
         tf = {key: dict(v) for key, v in (bkw.get("tariffs") or {}).items()}
         for key, by in tariffs.items():
-            cur = tf.setdefault(key, {})
+            cur = tf.setdefault(key, {y: 0.0 for y in years})   # a new arc: no tariff in the years not given
             for y, v in by.items():
                 cur[y] = max(cur.get(y, 0.0), v)
         bkw["tariffs"] = tf
