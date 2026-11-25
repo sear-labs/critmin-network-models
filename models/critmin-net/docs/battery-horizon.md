@@ -199,7 +199,7 @@ Nothing is unmet in any case.
 |---|---|---|---|---|
 | no policy | 3% | 1% | 69% | 28% |
 | no policy, new mines at own cost | 3% | 1% | 11% | 84% |
-| no policy, myopic | 3% | 0% | 17% | 79% |
+| no policy, myopic | 3% | 0% | 16% | 81% |
 | no policy, 2024's offsets kept | 64% | 5% | 12% | 19% |
 
 - **With the mining data, the allies (Australia) take the growth.** New mines there cost little to run (14.5 USD
@@ -230,6 +230,44 @@ cathode and anode). 2025 demand is an input, so the test is where things were ma
   82%).
 - Furthest: nickel mining (allies 24% against 15%), cobalt from nickel mines (rest of world 15% against 22%), the
   US's cells (12% against 6%: 45X).
+
+### The scenario set
+
+`scripts/battery_scenarios.py` runs every combination of the axes the sensitivity sweep and the backcast showed
+matter:
+
+| Axis | Values |
+|---|---|
+| Demand | IEA STEPS, CPS |
+| Policy | none; current law; current law plus onshoring floors; current law plus China's export controls |
+| New mines | the greenfield studies' costs; each region's own cost |
+| Foresight | perfect; five years (myopic) |
+| Persistence of 2024's patterns | fade by 2030; kept |
+| Cost path | low, mid, high |
+
+That is 192 runs, about 20 minutes on one machine with six at a time. Each run is exported for cem-impacts, and
+`scripts/battery_scenarios_summary.py` reads across them. All 192 solve with no unmet demand.
+
+| Result, 2040 | Range over the 192 runs | What moves it |
+|---|---|---|
+| China's share of cells | 73-95% | policy: 92% without floors, 75% with them |
+| US and allies' share of cells | 4-25% | policy: 7% without floors, 24% with them |
+| China's share of refined lithium | 63-87% | policy: 85% without floors, 73% with them |
+| Allies' share of lithium mining | 7-69% | new-mine costs (29% studies, 15% own cost), persistence, foresight |
+| China's share of lithium mining | 3-64% | persistence (3% fading, 32% kept) and foresight |
+| Recycling (GWh-equivalent) | 920-1,580 | cost path, demand |
+| Cost against no policy | -18% to +31% | cost path, persistence; floors add about 7%, current law about 1% |
+
+Where cells and refining are made turns on policy alone; where lithium is mined turns on what nobody publishes (new
+mines' costs, how long today's patterns last, how far ahead investors look).
+
+Myopic runs had two artefacts until 0.15.1, both fixed:
+- A window charged a new plant's capital only to the window's end. A plant built in its last year then cost a
+  year's annuity, so the US built half the world's cells for 45X's last full year. Capital is now charged to 2040
+  in every window.
+- The onshoring floors are shares of output. With plants unable to arrive in time, the model met them by shrinking
+  the market (cells in 2040 fell to about a quarter). They are now soft: a shortfall costs 100 USD per kg or kWh
+  (`floor_penalty`). That is above their shadow prices with perfect foresight, so there they are met in full.
 
 ## What is still weak
 

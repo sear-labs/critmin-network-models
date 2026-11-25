@@ -589,3 +589,27 @@ def test_horizon_yards_cost_to_hold(horizon):
     assert held(res["cost"], 2040) < 0.2 * held(free, 2040)
     assert sum(v for (q, y), v in res["cost"]["recycled"].items() if y == 2040) > \
         sum(v for (q, y), v in free["recycled"].items() if y == 2040)
+
+
+def _cells(r, y, regions=None):
+    return sum(v for k, v in r["prod"].items() if k[0] == 'cell' and k[-1] == y and (regions is None or k[-2] in regions))
+
+
+def test_horizon_myopic_pays_for_plants_past_its_window(horizon, horizon_policy):
+    """0.15.1: a myopic window charges a plant's capital to the horizon's end, so it does not build for the last year
+    it sees and abandon the plant (before, the US built half the world's cells for 45X's last full year, 2030)."""
+    H, B, inp, cal, res = horizon
+    r = H.run("cost", inputs=inp, cal=cal, policy={}, foresight=5)
+    p = horizon_policy["policy"]
+    assert r["status"] == 2
+    assert _cells(r, 2030, ('US',)) / _cells(r, 2030) <= _cells(p, 2030, ('US',)) / _cells(p, 2030) + 0.05
+
+
+def test_horizon_myopic_floors_do_not_shrink_the_market(horizon):
+    """0.15.1: onshoring floors are soft (KNOBS floor_penalty), so a myopic run short of plants in time pays for the
+    shortfall instead of shrinking world output to meet a share (before, cells in 2040 fell to about a quarter)."""
+    H, B, inp, cal, res = horizon
+    r = H.run("onshore", inputs=inp, cal=cal, foresight=5)
+    assert r["status"] == 2 and r["short"] == {}
+    assert _cells(r, 2040) >= 0.9 * _cells(res["onshore"], 2040)
+    assert res["onshore"]["floor_short"] == {}         # with perfect foresight every floor is met in full

@@ -263,7 +263,7 @@ def sets(intensity, lc=None, chem_choice=False, co_per_ni=None):
 
 
 def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=None, quad=None, years=None,
-            capex=None, lead=None, crf=None, chem_choice=False, co_per_ni=None):
+            capex=None, lead=None, crf=None, chem_choice=False, co_per_ni=None, charge_to=None):
     """(net, params, build options, need) for build() from the inputs (load() makes them).
 
     inputs: intensity {chem: {mineral: kg/kWh}}; demand {(use, chem, region, year): GWh}; history {(use, chem,
@@ -355,13 +355,14 @@ def network(inputs, losses=None, life=None, repurpose=None, collect=None, base=N
         pc = {p[1:] + (r, y): unit_cost(p, r, b(y)) for p in net["processes"] if p[0] == s for r in REGIONS for y in Y}
         vc = {k: 0.0 for k in pc}
         if capex is not None:                    # a plant decided in y serves from y + lead to the last year
+            end = max(Y) if charge_to is None else charge_to   # (charge_to: a later last year, for a myopic window)
             for p in net["processes"]:
                 if p[0] != s or capex_key(p) is None:
                     continue
                 for r in REGIONS:
                     L = _lead(lead, s, r)
                     for y in Y:
-                        vc[p[1:] + (r, y)] = capex[capex_key(p), r] * crf * max(0, max(Y) - (y + L) + 1)
+                        vc[p[1:] + (r, y)] = capex[capex_key(p), r] * crf * max(0, end - (y + L) + 1)
         cost[s] = (pc, vc, {k: 0.0 for k in pc})
     demand = {}
     for (u, c, r, y), v in D.items():
