@@ -325,6 +325,9 @@ KNOBS = dict(
     # (0.13.0). Refining stays open (it refines cobalt). [] lets it build on its curves like any region.
     no_entry=[('pcam', 'SPC'), ('cath', 'SPC'), ('anode', 'SPC'), ('cell', 'SPC')],
     pyro=True,                     # pyromet+ as a recycling route (PYRO)
+    floor_penalty=100.0,           # onshoring floors: USD per kg or kWh short (ours; above their shadow prices, under
+                                   # 30, so they are met where they can be; low enough that shrinking the market to
+                                   # meet a share never pays). None: hard floors
     quotas=True,                   # operations held at their quotas (QUOTA_OPS: Chile's Atacama); False: they retire
     greenfield=None,               # new mines' operating costs: None takes GREENFIELD; {} prices new capacity at the
                                    # region's own cost (0.12.1's rule), a dict overrides
@@ -615,7 +618,7 @@ def _extend(net, params, years, pyro=True):
             if ex:
                 L = int(ex["lead"])
                 for y in Y:
-                    vc[q[1:] + (r, y)] = ex["capex"] * CRF * max(0, max(Y) - (y + L) + 1)
+                    vc[q[1:] + (r, y)] = ex["capex"] * CRF * max(0, max(YEARS) - (y + L) + 1)
         lead[q] = {r: int((EXPANSION.get((m, r)) or EXPANSION.get((m, None)) or {"lead": 5})["lead"]) for r in B.REGIONS}
     res = net.get("reserves", {})
     for (s, m, r), spec in list(res.items()):
@@ -637,7 +640,7 @@ def _extend(net, params, years, pyro=True):
             for r in B.REGIONS:
                 for y in Y:
                     rpc[q[1:] + (r, y)] = PYRO["opex"][r] / k
-                    rvc[q[1:] + (r, y)] = PYRO["capex"][r] / k * CRF * max(0, max(Y) - (y + plead[r]) + 1)
+                    rvc[q[1:] + (r, y)] = PYRO["capex"][r] / k * CRF * max(0, max(YEARS) - (y + plead[r]) + 1)
                     rfc[q[1:] + (r, y)] = 0.0
                 cap = PYRO["capacity"].get(r, 0.0) if first else 0.0   # pooled: on the first route only
                 ic[q + (r,)] = {y: cap * k for y in Y}
@@ -693,7 +696,11 @@ def network(inputs, years=None, knobs=None, cal=None, policy=None):
     k = {**KNOBS, **(knobs or {})}
     Y = list(years or YEARS)
     cx = capex(inputs["intensity"])
+    # capital is charged to the horizon's end even in a myopic window (charge_to): a plant, once built, is paid for
+    # whether or not the window sees the years it serves (0.15.1; charged only to the window's end, a plant built in
+    # its last year cost one year's annuity, and the US built half the world's cells for 45X's last year)
     net, params, bkw, need = B.network(inputs, years=Y, capex=cx, lead=LEAD, crf=CRF, chem_choice=True,
+                                       charge_to=max(YEARS),
                                        co_per_ni=_co_per_ni(inputs))
     _extend(net, params, Y, pyro=k["pyro"])
     groups = _groups(net)
@@ -769,7 +776,7 @@ def network(inputs, years=None, knobs=None, cal=None, policy=None):
             for r in B.REGIONS:
                 for y in Y:
                     vc[p[1:] + (r, y)] = (HYDROMET_CAPEX[r] / _pool_coef(net, p + (r,)) * CRF
-                                          * max(0, max(Y) - (y + LEAD['refine'][r]) + 1)
+                                          * max(0, max(YEARS) - (y + LEAD['refine'][r]) + 1)
                                           * _index(paths.get(('capex', 'hydromet')), y))
     # cobalt: mined where it is a co-product of nickel; primary cobalt mines only in the DRC (and built anywhere)
     for p in net["processes"]:
@@ -1097,11 +1104,15 @@ def feoc_constraints(m, h, net, law="PL 119-21"):
     return out
 
 
-def onshore_floor(m, h, inputs, floor=None):
+def onshore_floor(m, h, inputs, floor=None, penalty=None):
     """The onshoring scenario's constraints on model m (build()'s handles h): at each processing and manufacturing
     group (battery._group(): refining by metal, precursor and cathode by chemistry, anode, cells), the US and allies
     make at least floor(y) x their share of the world's cells placed x the world's output. floor: {year: share}
-    anchors (ONSHORE by default), none before the first."""
+    anchors (ONSHORE by default), none before the first.
+    penalty: USD per unit (kg, kWh) the floor falls short, or None for a hard floor. A soft floor is met wherever it
+    can be (its shadow prices with perfect foresight are below 30); short of it only where plants cannot arrive in
+    time (a myopic run), and the market is not shrunk to meet a share. Returns ({(group, year): constraint},
+    penalty expression); the shortfalls are h["floor_short"]."""
     from gurobipy import quicksum
     fl = ONSHORE if floor is None else floor
     D = inputs["demand"]
@@ -1118,8 +1129,12 @@ def onshore_floor(m, h, inputs, floor=None):
             if yy == y and g and g[0] != 'mine':
                 groups.setdefault(g, []).append((n, v))
         for g, nv in groups.items():
-            out[g, y] = m.addConstr(quicksum(v for n, v in nv if n[-1] in US_ALLY) >= f * quicksum(v for _, v in nv))
-    return out
+            s = m.addVar() if penalty else 0.0
+            if penalty:
+                h.setdefault("floor_short", {})[g, y] = s
+            out[g, y] = m.addConstr(quicksum(v for n, v in nv if n[-1] in US_ALLY) + s >= f * quicksum(v for _, v in nv))
+    pen = quicksum(penalty * h["weight"](y) * s for (g, y), s in h.get("floor_short", {}).items()) if penalty else 0.0
+    return out, pen
 
 
 def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=None, knobs=None, policy=None,
@@ -1146,7 +1161,9 @@ def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=
         for (n, y), v in fixed.items():
             if (n, y) in h["newc"]:
                 h["newc"][n, y].lb = h["newc"][n, y].ub = v
-        fl = onshore_floor(m, h, inputs, floor) if scenario == "onshore" else {}
+        fl, fpen = (onshore_floor(m, h, inputs, floor, (KNOBS | (knobs or {}))["floor_penalty"])
+                    if scenario == "onshore" else ({}, 0.0))
+        obj = obj + fpen
         if policy and policy.get("feoc"):
             feoc_constraints(m, h, net, policy.get("law", "PL 119-21"))
         if policy is not None and policy.get("drc_quota", True):
@@ -1164,7 +1181,8 @@ def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=
     out = dict(status=m.Status, obj=m.ObjVal, value=value, cost=m.ObjVal + value, need=need, prod={}, cap={},
                audit=report,
                built={}, served={}, short={k_: v.X for k_, v in h["short"].items() if v.X > 1e-6},
-               floor={k_: c.Pi for k_, c in fl.items()} if m.IsMIP == 0 else {})
+               floor={k_: c.Pi for k_, c in fl.items()} if m.IsMIP == 0 else {},
+               floor_short={k_: v.X for k_, v in h.get("floor_short", {}).items() if v.X > 1e-6})
     for (g, r, y, kk), v in h["served"].items():
         out["served"][g, r, y] = out["served"].get((g, r, y), 0.0) + v.X
     out["expanded"] = {}                           # {(mineral, region, year): units from brownfield expansions}

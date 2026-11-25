@@ -3,6 +3,24 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.15.1 (2026-11-25)
+
+- **The scenario set** (`scripts/battery_scenarios.py`, `scripts/battery_scenarios_summary.py`): 192 runs.
+  - Axes: demand x policy x new-mine costs x foresight x persistence of 2024's patterns x cost path.
+  - Each run is exported for cem-impacts. The runner can be resumed and run in parallel, and takes about 20 minutes
+    on one machine.
+  - All 192 solve with no unmet demand.
+  - Cells and refining move with policy only. Lithium mining moves with new-mine costs, persistence and foresight.
+- **Two myopic artefacts fixed,** found by the first full run (perfect-foresight results unchanged):
+  - A myopic window charged a plant's capital only to its own end, so the US built half the world's cells for 45X's
+    last full year and abandoned them. Capital is now charged to the horizon's end in every window
+    (`battery.network(charge_to=)`).
+  - Onshoring floors are soft (`KNOBS["floor_penalty"]`, 100 USD per kg or kWh short; ours, above their shadow
+    prices, under 30). Before, a myopic run met the share by shrinking world output, with 2040 cells falling to about
+    a quarter. `run()` returns `floor_short`.
+- Tests: a myopic run builds no stranded US cells for 2030; myopic floors do not shrink the market; with perfect
+  foresight every floor is met.
+
 ## 0.15.0 (2026-11-24)
 
 - **The cem-impacts export** (`critmin_net.export`): `write(run, folder, scenario)` writes one folder per solved run
