@@ -111,8 +111,8 @@
   <rect class="rec" x="380" y="410" width="215" height="62"/>
   <text class="t" x="390" y="430">hydromet+ (to refined chemicals)</text><text class="s" x="390" y="446">IEA 2023 capacity; built at its capital</text><text class="s" x="390" y="460">cost only where it pays (45X counts)</text>
   <rect class="rec" x="380" y="479" width="215" height="38" stroke-dasharray="4 3"/>
-  <text class="t" x="390" y="495">pyromet+ (to an alloy, as mined Ni)</text>
-  <text class="s" x="390" y="510">off: no sourced operating cost; Li, Mn lost</text>
+  <text class="t" x="390" y="495">pyromet+ (alloy, refined to Ni, Co)</text>
+  <text class="s" x="390" y="510">EverBatt costs; Li, Mn lost; seldom pays</text>
 
   <path class="lg" d="M1105,218 L1105,298"/>
   <path class="lg" d="M1015,336 C990,336 990,290 975,222"/>
@@ -122,7 +122,7 @@
   <path class="lg" d="M700,445 L597,445"/>
   <path class="lg" d="M700,480 C650,500 640,500 597,500" stroke-dasharray="4 3"/>
   <path class="lg" d="M470,410 C470,320 440,240 418,195"/>
-  <path class="lg" d="M380,498 C300,498 300,330 240,195" stroke-dasharray="4 3"/>
+  <path class="lg" d="M380,498 C340,498 330,330 380,195" stroke-dasharray="4 3"/>
   <text class="s" x="478" y="360">metals back to refining</text>
   <text class="s" x="478" y="374">(the main metal and co-products)</text>
 

@@ -17,8 +17,9 @@ regional map and calibration are ours, not Alavi's or LLNL's (LLNL-TR-859392 sup
 - **Stages:** mining, refining to battery grade, precursor (pCAM for NMC, iron phosphate for LFP), anode
   material, cathode, cells, four end uses, and retired packs. Retired packs either get a second life as
   storage or are shredded into black mass, in one stage. Hydromet+ recovers the metals as refined chemicals and sends
-  them back to refining. Pyromet+ (smelting to an alloy that refines like mined nickel) is built but off: no operating
-  cost has been sourced. Manganese ore, iron and phosphorus are base materials, bought rather than mined.
+  them back to refining. Pyromet+ smelts NMC black mass to an alloy and refines it to nickel and cobalt, losing the
+  lithium and manganese (Argonne's EverBatt costs). Manganese ore, iron and phosphorus are base materials, bought
+  rather than mined.
 - **Yards:** retired packs and black mass can be held from year to year (from 2025) before reuse or recycling, or
   never processed.
 - **Mines** can expand beside existing operations where an expansion's cost is sourced (brownfield, with its own
@@ -88,21 +89,25 @@ decision to output, by stage and region:
 
 ### Mines: expansions, new mines and royalties
 
-From `battery_horizon/mining/` (128 rows, each checked against its source). USD per kg contained.
+From `battery_horizon/mining/` (165 rows, each checked against its source). USD per kg contained.
 
 | | Allies | Rest of world | China | US |
 |---|---|---|---|---|
 | Lithium expansion, capital per kg a year | 47.9 (Pilgangoora, Greenbushes; 2 years) | 18.5 (Mali, Brazil, Argentina) | 115 (Qarhan) | 310 (Thacker Pass 2) |
 | Lithium new mine, operating cost | 14.5 | 14.1 | own cost | 15.4 |
-| Lithium royalty | 2.41 (Western Australia 5%) | 4.77 (Chile's CORFO payments, Argentina, Africa, Brazil) | 2.89 (resource tax, midpoint) | none |
+| Lithium royalty | 2.41 (Western Australia 5%) | 4.77 (Chile's CORFO payments, Argentina, Africa, Brazil) | 2.91 (provincial resource taxes by its mix) | none |
 | Nickel expansion, capital per kg a year | 72.7 (Crawford) | 27.3 (Indonesian HPAL) | none | none |
 | Nickel royalty | 0.42 | 0.27 (2% on MHP) | none added | none |
 
 - Expansions have room for half of a region's 2024 capacity (ours).
 - An Australian expansion costs more per unit than IEA's figure for a new Australian mine (48 against 28). Its edge
   is its lead time: 2 years against 5.
-- Chile's cheap Atacama brine is capped by its quotas (SQM 406 kt Li to 2030, about 60% used by 2025), so new
-  rest-of-world supply comes at greenfield cost.
+- **Chile's Atacama operations are held at their CORFO quotas** and do not retire (`QUOTA_OPS`, knob `quotas`):
+  - Albemarle: 15.9 kt Li a year to 2043.
+  - SQM: 32.5 a year over 2026-2030, the rest of its 406 kt.
+  - The SQM-Codelco venture: 62.0 a year from 2031.
+
+  Other new rest-of-world supply comes at greenfield cost.
 
 ### Policy
 
@@ -174,10 +179,12 @@ Nothing is unmet in any case.
 - **Recycling** reaches about 1,040 GWh-equivalent of hydromet+ feed in 2040. That is lower than 0.12.1's 1,650,
   since second life became a curve and the yards were added. Which of the two accounts for the drop is not yet
   separated.
+- **Pyromet+ is never chosen,** not even Umicore's existing plant. Hydromet+ also recovers the lithium and manganese
+  that pyromet+ loses to slag. It is there for scenarios, such as limits on hydromet+ or a low lithium price.
 
 ![Resource cost by case](figures/cost_by_case.png)
 
-- **Onshoring** adds about 44 B USD (3.0%) to the discounted 2023-2040 cost, or 62 B USD with current policy as
+- **Onshoring** adds about 44 B USD (3.1%) to the discounted 2023-2040 cost, or 62 B USD with current policy as
   well.
 - **Current policy alone** adds 2 B USD and pays 42 B USD of credits.
 - **China's controls** add less resource cost than the policy case. Resource cost leaves out the tariffs, and the
@@ -189,22 +196,22 @@ Nothing is unmet in any case.
 
 | Lithium mined, 2040 | China | US | Allies | Rest of world + DRC |
 |---|---|---|---|---|
-| no policy | 3% | 1% | 76% | 20% |
-| no policy, new mines at own cost | 3% | 1% | 8% | 88% |
-| no policy, myopic | 3% | 0% | 19% | 78% |
-| no policy, 2024's offsets kept | 64% | 5% | 12% | 19% |
+| no policy | 3% | 1% | 70% | 27% |
+| no policy, new mines at own cost | 3% | 1% | 15% | 81% |
+| no policy, myopic | 3% | 0% | 23% | 74% |
+| no policy, 2024's offsets kept | 63% | 5% | 12% | 20% |
 
 - **With the mining data, the allies (Australia) take the growth.** New mines there cost little to run (14.5 USD
   per kg), little to build (IEA's 28 per kg a year) and pay a low royalty (2.41). New rest-of-world supply costs
-  about as much to run but twice as much to build (55), and pays twice the royalty. Chile's cheap brine cannot grow
-  past its quotas.
+  about as much to run but twice as much to build (55), and pays twice the royalty. Chile's cheap brine grows only
+  as its quotas allow (from 2031 the SQM-Codelco venture's 62 kt a year).
 - **Three choices reverse it:**
   - pricing new mines at each region's existing cost (0.12.1's rule; the rest of the world's is 11.4, held down by
     Chile's brine);
   - planning only five years ahead, which favours the rest of the world's 2-year lead over the allies' 5;
   - keeping 2024's unexplained costs, which favours China.
-- Rest-of-world expansions fill their room by 2030; Australian expansions are not built, since a new Australian
-  mine is cheaper per unit.
+- Rest-of-world expansions fill their room (61 kt) by 2028. Australian expansions are not built, since a new
+  Australian mine is cheaper per unit.
 - Refining, cathode, cells and the cost of onshoring barely move between these cases. The offsets-kept case counts
   the offsets as costs, so its total is not comparable with the others.
 
@@ -221,13 +228,14 @@ Nothing is unmet in any case.
 - **Nameplate capacity** is in hand only for cells and recycling.
 - **Mining medians** rest on three to five projects each, some of them studies, not outturns. Lithium's regional
   split turns on them.
-- **Royalty gaps:**
-  - China's provincial resource-tax rates were not found (the midpoint is used).
-  - Indonesia's royalty on nickel ore is left out (the ore's value is not in the files).
+- **Royalties:**
+  - They are held at 2024 values; ad valorem royalties do not rise and fall with prices.
+  - Jiangxi's 6.5% comes from its miners' reports, not the provincial decision.
+  - Indonesia's ore royalty is taken to be in the HPAL plants' ore costs.
   - Zimbabwe's 7% rests on a secondary source.
-- **Pyromet+** is off until an operating cost is sourced. EverBatt computes one only in its spreadsheet.
-- **Chile's quotas** are reflected only in the greenfield cost, not as a cap. Chile is part of the rest of the
-  world, so a Chile-only cap needs its own region or a reserve.
+- **Pyromet+ costs** are model runs of EverBatt (2017 equipment, US, China and Korea), not plant outturns. China's
+  and Korea's operating costs are derived from their totals with the US's capital charges (ours).
+- **Chile's quotas** are annual averages of cumulative limits.
 - **The foreign-entity rule treats China as the foreign entity by location.** Ownership (Chinese firms' plants
   elsewhere) is not modelled.
 - **The DRC's no-entry default** is a hard limit, as a knob (`no_entry=[]` lets it build on its curves).

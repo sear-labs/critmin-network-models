@@ -3,6 +3,39 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.14.0 (2026-11-24)
+
+The battery model's last pieces. Horizon results move again (PRELIMINARY); the lithium model is unchanged (all 12
+fingerprinted cases), and so is the battery network's 2023-2024 calibration.
+- **Chile's Atacama held at its CORFO quotas** (`QUOTA_OPS`, `KNOBS["quotas"]`). Albemarle runs at 15.9 kt Li a year
+  to 2043, SQM at 32.5 over 2026-2030, and the SQM-Codelco venture at 62.0 from 2031. They do not retire, and the
+  region keeps their capacity. `curves.supply_blocks` takes a step (size, cost, size_2024) that keeps its size.
+- **Pyromet+ on** (`PYRO`, `KNOBS["pyro"]`), as a refining route beside hydromet+ (one pooled plant):
+  - NMC black mass to refined nickel and cobalt at 98%; lithium and manganese lost.
+  - Costs from Argonne's EverBatt 2019, run at its defaults for the US, China and Korea. Its scope includes refining
+    the alloy, and an independent check reproduced it from the workbook's formulas.
+  - Converted at 3.7 kg of cells per kWh and to 2024 dollars by CPI-U.
+  - China's and Korea's operating costs are derived from their totals (ours).
+  - Existing capacity: Umicore Hoboken. At these costs it is never chosen, since hydromet+ also recovers lithium
+    and manganese.
+- **China's lithium royalty** from the provinces' rates by its mix: Jiangxi 6.5%, Qinghai 6%, Sichuan 4.5%. That is
+  2.91 USD per kg, against 2.89 at the old midpoint.
+- **Second life** cited:
+  - The 80% viable share agrees with NREL's 80-90%.
+  - The 20% anchor is the JRC's 2030 scenario.
+  - Repurposing's 30 USD per kWh sits in NREL's 20-49.
+- **Indonesia's nickel ore benchmark** is sourced (about 3.06 USD per kg Ni). Its royalty stays out of the cost,
+  since it is in the HPAL plants' ore costs.
+- Data: 37 rows added to `battery_horizon/mining/` (X128-X164), all confirmed by an independent check.
+- `run()` returns `pyro` (GWh-equivalents of black mass by region and year).
+- What it shows (STEPS, no policy):
+
+  | Lithium mined, 2040 | Allies | Rest of world + DRC |
+  |---|---|---|
+  | Default (0.13.0 had 76% / 20%) | 70% | 27% |
+  | New mines at their region's own cost | 15% | 81% |
+  | Myopic | 23% | 74% |
+
 ## 0.13.0 (2026-11-24)
 
 Committed together with 0.12.1: the two were developed in the same files. 0.12.1's horizon results are superseded;

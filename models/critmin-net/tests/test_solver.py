@@ -407,7 +407,7 @@ def test_horizon_builds_wait_for_their_region_lead(horizon):
     H, B, inp, cal, res = horizon
     for r in res.values():
         for (s, key, rg, y), v in r["built"].items():
-            lead = (H.EXPANSION[key, rg]["lead"] if s == 'expand' else H.LEAD['refine' if s == 'hydromet' else s][rg])
+            lead = (H.EXPANSION[key, rg]["lead"] if s == 'expand' else H.LEAD['refine' if s in ('hydromet', 'pyro') else s][rg])
             assert y >= min(H.YEARS) + lead and y > max(B.YEARS)
 
 

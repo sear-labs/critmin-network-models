@@ -295,9 +295,12 @@ KNOBS = dict(
     yard=True,                     # retired packs and black mass may be held from year to year (yards) before
                                    # reuse or recycling, or never
     # second life after 2024 (Jones, 2026-11-24: not a hard share, a curve): at most `viable` of retired EV packs can be
-    # repurposed (80% of collected packs viable, stakeholder-based, battery_2023_2024/lifecycle.csv row 39; other
-    # published shares are scenario assumptions, 0-100%); repurposing costs rise on a supply curve anchored at `anchor`
-    # of retired EV packs (ours) with `elasticity` (ours). 2023-2024 keep battery.LIFECYCLE's 5% (little was reused).
+    # repurposed (80% of collected packs viable, stakeholder-based, battery_2023_2024/lifecycle.csv row 39; NREL: 80-90%
+    # of US packs eligible after 15 years, X137, X138); repurposing costs rise on a supply curve anchored at `anchor` of
+    # retired EV packs (the JRC's REP-20 scenario, 20% of removed batteries to second use by 2030, X144; Norway reuses
+    # about 60% today, X142, and the EU would need 40% to cover its storage by 2040, X143) with `elasticity` (ours).
+    # Repurposing's own cost, 30.09 USD per kWh (battery_costs), sits in NREL's 20-49 (X139-X141). 2023-2024 keep
+    # battery.LIFECYCLE's 5% (little was reused).
     second_life={'viable': 0.80, 'anchor': 0.20, 'elasticity': 1.0},
     # rules of origin: a region exports only what it made (and, for base goods, bought), so a good cannot pass
     # through a low-tariff region to dodge a tariff, 45X's foreign-entity rule or an export control (0.13.0: without
@@ -311,6 +314,8 @@ KNOBS = dict(
     # only its cobalt mining), yet as the one region with no US tariff it would otherwise supply the US from 2030
     # (0.13.0). Refining stays open (it refines cobalt). [] lets it build on its curves like any region.
     no_entry=[('pcam', 'SPC'), ('cath', 'SPC'), ('anode', 'SPC'), ('cell', 'SPC')],
+    pyro=True,                     # pyromet+ as a recycling route (PYRO)
+    quotas=True,                   # operations held at their quotas (QUOTA_OPS: Chile's Atacama); False: they retire
     greenfield=None,               # new mines' operating costs: None takes GREENFIELD; {} prices new capacity at the
                                    # region's own cost (0.12.1's rule), a dict overrides
     strict=True,                   # audit(): refuse to solve while a fixed or flat piece has no reason in ALLOW
@@ -421,22 +426,56 @@ ROYALTY = {
     # export duty (X27, X30) on the value; hard rock, the mean of Brazil's paid 0.91 (X48), Mali's 6% modelled 1.66
     # (X55), Zimbabwe's 7% and 2% levy (X42, X43) and Ghana's 5% (X66) on the value
     ('Li', 'ROW'): 0.482 * 6.92 + 0.177 * 0.075 * _V_LI + 0.341 * (0.91 + 1.66 + 0.09 * _V_LI + 0.05 * _V_LI) / 4,
-    ('Li', 'CHN'): 0.06 * _V_LI,   # resource tax 2-10% on ore (X37): the midpoint (ours; provincial rates not found)
+    # China: the provinces' resource-tax rates by its 2023 mix (battery_costs/selected.csv: lepidolite 0.447, brine
+    # 0.435, spodumene 0.118): Jiangxi's lepidolite 6.5% (X149, X150, as its miners report), Qinghai's lithium salts
+    # 6% (X151; brine sold as brine pays 15%, X152), Sichuan's concentrate 4.5% (X146)
+    ('Li', 'CHN'): (0.447 * 0.065 + 0.435 * 0.06 + 0.118 * 0.045) * _V_LI,
     # the US: none (no federal royalty on hardrock; Nevada taxes net proceeds, 2-5%, X58, a tax on profit)
     ('Ni', 'ALLY'): 0.025 * _V_NI,  # Western Australia 2.5% (X84)
-    # rest of the world: Indonesia's 2% on MHP (X76) at its 80.3% payable (U149); the ore royalty (14-19% of the ore's
-    # price, X67-X71) is not added: the ore's value is not in the files. China: none added (IEA's all-in cost, U51)
+    # rest of the world: Indonesia's 2% on MHP (X76) at its 80.3% payable (U149). The ore royalty (14-19% of the ore's
+    # benchmark price, X67-X71; about 3.06 USD per kg Ni at 1.8% in 2025, X160) is not added: the HPAL plants whose
+    # costs these are buy ore at that benchmark, so it is in their cost. China: none added (IEA's all-in cost, U51)
     ('Ni', 'ROW'): 0.02 * 0.803 * _V_NI,
     ('graphite', 'ROW'): 0.03 * 0.4947,   # Mozambique 3% (X107) on the flake price (U168)
 }
 for _m in ('Li', 'Ni', 'graphite'):              # the DRC as the rest of the world (it mines no lithium or graphite)
     if (_m, 'ROW') in ROYALTY:
         ROYALTY[_m, 'SPC'] = ROYALTY[_m, 'ROW']
-# Pyrometallurgy ("pyromet+"): recoveries are sourced (Ni, Co 98%, Cu 90%, lithium and manganese to slag: EverBatt,
-# X115-X118) and one capital cost (smelter equipment only, 2017, X120), but no operating cost was found, so it stays
-# off (None) until one is: dict(recovery={'Ni':, 'Co':}, opex={region:}, capex={region:}, lead={region:},
-# capacity={region:}).
-PYRO = None
+# Operations held at a quota after the observed years, not retiring: {(group, region): {index in OPERATIONS: {year:
+# kt}}}. Chile's Salar de Atacama (CORFO): Albemarle 310.036 kt Li left at mid-2024, to 1 Jan 2044 (X24): 15.9 a
+# year; SQM 405.914 kt Li to 2030, about 60% used by the end of 2025 (X18): 32.5 a year over 2026-2030; the SQM-Codelco
+# venture (Novandino) 1,859.928 kt Li over 2031-2060 (X19): 62.0 a year. Annual averages of cumulative quotas.
+QUOTA_OPS = {
+    (('mine', 'Li'), 'ROW'): {
+        0: {y: 310.036 / 19.5 for y in range(2025, 2044)},                           # Albemarle Atacama
+        1: {**{y: 0.4 * 405.914 / 5 for y in range(2026, 2031)},                   # SQM Atacama
+            **{y: 1859.928 / 30 for y in range(2031, 2061)}},
+    },
+}
+# Pyrometallurgy ("pyromet+"): black mass of a nickel chemistry smelted to an alloy that is leached and refined to
+# nickel and cobalt compounds, lithium and manganese lost to slag; a refining route beside hydromet+ (one plant serves
+# either NMC black mass). Argonne's EverBatt 2019, generic pyro process, NMC622 cells, run with its defaults at each
+# location (X128-X134; reproduced by the independent check): the scope includes refining the alloy, so pyromet+ makes
+# refined nickel and cobalt. USD per kg of cells, equipment in 2017 dollars:
+#   cost without capital charges: US 2.21 (X129); China and Korea (the allies) only as totals, 1.92 and 2.61 (X131,
+#   X132), so less the US's capital charges per unit of capital ((3.40 - 2.21) / 5.72 = 0.208, X128-X130; ours)
+#   capital per kg of cells a year: US 5.72 (X130), China 3.43 (X131), Korea 4.58 (X132); the rest of the world and the
+#   DRC between the US and China, as elsewhere
+# Per kWh of black mass at 3.7 kg of high-nickel cells per kWh (over 270 Wh per kg, E222; ours for low-nickel NMC too),
+# and to 2024 dollars by US CPI-U annual averages (BLS: 2017 245.120, 2024 313.689). Recoveries 98% nickel and cobalt
+# (X115, X116). Existing capacity: Umicore Hoboken's 7,000 t of batteries a year (X123), 1.9 GWh-equivalent. Lead:
+# refining's. KNOBS["pyro"] False leaves it out.
+_KG_NMC, _CPI_2017 = 3.7, 313.689 / 245.120
+_CC = (3.40 - 2.21) / 5.72
+_PYRO_CASH = {'US': 2.21, 'CHN': 1.92 - _CC * 3.43, 'ALLY': 2.61 - _CC * 4.58}
+_PYRO_CAPEX = {'US': 5.72, 'CHN': 3.43, 'ALLY': 4.58}
+for _d in (_PYRO_CASH, _PYRO_CAPEX):
+    _d['ROW'] = _d['SPC'] = (_d['US'] + _d['CHN']) / 2
+PYRO = dict(recovery={'Ni': 0.98, 'Co': 0.98},
+            opex={r: v * _KG_NMC * _CPI_2017 for r, v in _PYRO_CASH.items()},       # USD per kWh of black mass
+            capex={r: v * _KG_NMC * _CPI_2017 for r, v in _PYRO_CAPEX.items()},     # USD per kWh of black mass a year
+            lead=None,                                                              # None: LEAD['refine']
+            capacity={'ALLY': 7000.0 / _KG_NMC / 1000.0})                           # GWh-equivalent a year
 CAL_ROUNDS = 8                     # calibrate(): refinement rounds, and the miss allowed, a share of the stage's output
 CAL_TOL = {None: 0.005, ('mine', 'graphite'): 0.02}   # graphite mining misses by up to 1.6%: the split of anode
                                                       # between natural and synthetic graphite is not observed
@@ -535,7 +574,7 @@ def _groups(net):
     return g
 
 
-def _extend(net, params, years):
+def _extend(net, params, years, pyro=True):
     """0.13.0: add to the battery network (i) an expansion process beside each region's mines ("mine", "expand", m):
     brownfield capacity, at the region's own operating cost plus royalty, EXPANSION's capital cost and lead, up to a
     share of 2024's capacity, drawing on the same reserves; (ii) pyrometallurgy ("mine", "pyro_<chem>", "Ni"): black
@@ -571,23 +610,28 @@ def _extend(net, params, years):
     for (s, m, r), spec in list(res.items()):
         if s == 'mine':
             res[(('mine', m, r), ('mine', 'expand', m, r))] = res.pop((s, m, r))
-    if PYRO:
+    if PYRO and pyro:
+        rpc, rvc, rfc = net["cost"]['refine']
+        plead = PYRO["lead"] or LEAD['refine']
+        first = True
         for c in [g[1][3:] for g in net["goods"] if g[0] == 'shred' and g[1].startswith('bm_nmc')]:
-            q = ('mine', f"pyro_{c}", 'Ni')
-            rec = net["recipe"][('refine', f"bm_{c}", 'Ni')][('shred', f"bm_{c}")]   # kt Ni per GWh-eq, by hydromet
-            k = rec / B.LIFECYCLE["recovery"]['Ni'] * PYRO["recovery"]['Ni']
-            net["processes"].append(q); net["recipe"][q] = {('shred', f"bm_{c}"): k}
-            co = net["coproducts"][('refine', f"bm_{c}", 'Ni')].get(('refine', 'Co'))
-            if co:                                   # kt Co per kt Ni recovered, at pyrometallurgy's recoveries
-                net["coproducts"][q] = {('mine', 'Co'): co / B.LIFECYCLE["recovery"]['Co'] * PYRO["recovery"]['Co']
+            h = ('refine', f"bm_{c}", 'Ni')            # hydromet+'s route for this black mass
+            q = ('refine', f"pyro_{c}", 'Ni')
+            k = net["recipe"][h][('shred', f"bm_{c}")] / B.LIFECYCLE["recovery"]['Ni'] * PYRO["recovery"]['Ni']
+            net["processes"].append(q); net["recipe"][q] = {('shred', f"bm_{c}"): k}   # kt Ni per GWh-eq
+            co = net["coproducts"][h].get(('refine', 'Co'))
+            if co:                                   # kt Co per kt Ni, at pyrometallurgy's recoveries
+                net["coproducts"][q] = {('refine', 'Co'): co / B.LIFECYCLE["recovery"]['Co'] * PYRO["recovery"]['Co']
                                         * B.LIFECYCLE["recovery"]['Ni'] / PYRO["recovery"]['Ni']}
             for r in B.REGIONS:
                 for y in Y:
-                    pc[q[1:] + (r, y)] = PYRO["opex"][r] / k
-                    vc[q[1:] + (r, y)] = PYRO["capex"][r] / k * CRF * max(0, max(Y) - (y + PYRO["lead"][r]) + 1)
-                    fc[q[1:] + (r, y)] = 0.0
-                ic[q + (r,)] = {y: PYRO.get("capacity", {}).get(r, 0.0) / (1.0 / k) for y in Y}
-            lead[q] = dict(PYRO["lead"])
+                    rpc[q[1:] + (r, y)] = PYRO["opex"][r] / k
+                    rvc[q[1:] + (r, y)] = PYRO["capex"][r] / k * CRF * max(0, max(Y) - (y + plead[r]) + 1)
+                    rfc[q[1:] + (r, y)] = 0.0
+                cap = PYRO["capacity"].get(r, 0.0) if first else 0.0   # pooled: on the first route only
+                ic[q + (r,)] = {y: cap * k for y in Y}
+            lead[q] = dict(plead)
+            first = False
     net["lead"] = lead
     params["cap_max"] = cap_max
 
@@ -640,7 +684,7 @@ def network(inputs, years=None, knobs=None, cal=None, policy=None):
     cx = capex(inputs["intensity"])
     net, params, bkw, need = B.network(inputs, years=Y, capex=cx, lead=LEAD, crf=CRF, chem_choice=True,
                                        co_per_ni=_co_per_ni(inputs))
-    _extend(net, params, Y)
+    _extend(net, params, Y, pyro=k["pyro"])
     groups = _groups(net)
     obs = _observed(net, params, bkw, groups)
     later = [y for y in Y if y not in B.YEARS]
@@ -674,13 +718,22 @@ def network(inputs, years=None, knobs=None, cal=None, policy=None):
                 ic[n][y] = 0.0
         for y in later:
             ic[nodes[0]][y] = v
+    held = {('mine', g[1], r): dict(ic[('mine', g[1], r)]) for (g, r) in QUOTA_OPS} if k["quotas"] else {}
     for n, by_y in ic.items():
         rate = k["retire"].get(n[0], 0.0)
         for y in later:
             by_y[y] = by_y[y] * max(0.0, 1.0 - rate * (y - max(B.YEARS)))
+    for (g, r), q in (QUOTA_OPS.items() if k["quotas"] else []):   # capacity held at a quota does not retire: its
+        n, ops = ('mine', g[1], r), OPERATIONS[g, r]               # share of the region's capacity is the quota
+        tot, rate = sum(sz for sz, _ in ops), k["retire"].get('mine', 0.0)
+        for y in later:
+            f = max(0.0, 1.0 - rate * (y - max(B.YEARS)))
+            for i, by in q.items():
+                if y in by:
+                    ic[n][y] += by[y] - held[n][y] * ops[i][0] / tot * f
     pools = []
     for r in B.REGIONS:
-        for members in (['anode'], ['cell'], ['pcam_nmc'], ['cath_nmc'], ['hydromet']):
+        for members in (['anode'], ['cell'], ['pcam_nmc'], ['cath_nmc'], ['hydromet'], ['pyro']):
             nodes = [p + (r,) for p in net["processes"] if _pool_of(p) == members[0]]
             if len(nodes) > 1:
                 pools.append({n: _pool_coef(net, n) for n in nodes})
@@ -756,7 +809,12 @@ def network(inputs, years=None, knobs=None, cal=None, policy=None):
                 steps = OPERATIONS.get((g, r)) if y in B.YEARS or k["operations_later"] else None
                 if steps and g[0] == 'mine':        # operations' costs exclude royalties; the node's cost has them
                     steps = [(sz, c + ROYALTY.get((g[1], r), 0.0)) for sz, c in steps]
-                gf = (GREENFIELD if k["greenfield"] is None else k["greenfield"]).get((g[1], r))                     if g[0] == 'mine' else None
+                if steps and y not in B.YEARS and k["quotas"]:   # operations held at their quotas, not retiring
+                    q = QUOTA_OPS.get((g, r), {})
+                    steps = [(q[n][y], c, sz) if n in q and y in q[n] else (sz, c)
+                             for n, (sz, c) in enumerate(steps)]
+                gf = ((GREENFIELD if k["greenfield"] is None else k["greenfield"]).get((g[1], r))
+                      if g[0] == 'mine' else None)
                 if gf is not None:
                     gf = (gf + ROYALTY.get((g[1], r), 0.0)) * _index(paths.get(('opex', 'mine')), y)
                 st = None
@@ -852,14 +910,16 @@ def _pool_of(p):
         return 'cath_nmc'
     if p[0] == 'refine' and p[1].startswith('bm_'):
         return 'hydromet'
+    if p[0] == 'refine' and p[1].startswith('pyro_'):
+        return 'pyro'
     return None
 
 
 def _pool_coef(net, n):
-    """Units on the pool's basis per unit of the node's output: 1, except hydromet (GWh-equivalents of black mass per
-    kt of its main metal)."""
-    if _pool_of(n[:-1]) == 'hydromet':
-        return 1.0 / net["recipe"][n[:-1]][('shred', n[1])]
+    """Units on the pool's basis per unit of the node's output: 1, except hydromet+ and pyromet+ (GWh-equivalents of
+    black mass per kt of the main metal)."""
+    if _pool_of(n[:-1]) in ('hydromet', 'pyro'):
+        return 1.0 / next(iter(net["recipe"][n[:-1]].values()))
     return 1.0
 
 
@@ -1107,14 +1167,16 @@ def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=
             out["prod"][key] = out["prod"].get(key, 0.0) + v.X
             out["cap"][key] = out["cap"].get(key, 0.0) + h["cap"][n, y].X
     for (n, y), v in h["newc"].items():
-        g = B._group(n) or (('hydromet', 'bm') if _pool_of(n[:-1]) == 'hydromet' else None)
+        pl = _pool_of(n[:-1])
+        g = B._group(n) or ((pl, 'bm') if pl in ('hydromet', 'pyro') else None)
         if n[0] == 'mine' and len(n) == 4:         # ('expand', mineral) or ('pyro_<chem>', 'Ni')
             g = (n[1], n[2])
         lp = net["lead"].get(n[:-1])               # a process's own lead (expansions), else its stage's
         L = (lp.get(n[-1], 5) if isinstance(lp, dict) else int(lp)) if lp is not None else B._lead(net["lead"], n[0], n[-1])
         if g and v.X > 1e-6 and max(B.YEARS) < y + L <= max(YEARS):
             key = g + (n[-1], y + L)
-            out["built"][key] = out["built"].get(key, 0.0) + v.X * (_pool_coef(net, n) if g[0] == 'hydromet' else 1)
+            out["built"][key] = out["built"].get(key, 0.0) + v.X * (_pool_coef(net, n) if g[0] in ('hydromet', 'pyro')
+                                                                   else 1)
     w = h["weight"]                                # transfers, discounted as the objective is: tariffs paid
     tf = bkw.get("tariffs", {})                    # (on build()'s embedded values) and 45X credits received
     paid = 0.0
@@ -1137,8 +1199,10 @@ def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=
     out["credits"] = sum(c * h["prod"][n, y].X * w(y) for (n, y), c in net.get("credit", {}).items()
                          if (n, y) in h["prod"])
     out["resource_cost"] = out["cost"] - paid + out["credits"]
-    out["recycled"] = {}
+    out["recycled"], out["pyro"] = {}, {}           # {(region, year): GWh-equivalents of black mass}, by route
     for (n, y), v in h["prod"].items():
-        if _pool_of(n[:-1]) == 'hydromet':
-            out["recycled"][n[-1], y] = out["recycled"].get((n[-1], y), 0.0) + v.X * _pool_coef(net, n)
+        pl = _pool_of(n[:-1])
+        if pl in ('hydromet', 'pyro'):
+            d = out["recycled"] if pl == 'hydromet' else out["pyro"]
+            d[n[-1], y] = d.get((n[-1], y), 0.0) + v.X * _pool_coef(net, n)
     return out

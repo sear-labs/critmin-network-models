@@ -120,3 +120,46 @@ def test_mining_tables_follow_their_rows():
     assert H.ROYALTY['Li', 'ALLY'] == pytest.approx(op("X12")[0])
     assert all(e["lead"] >= 1 and 0 < e["share"] <= 1 for e in H.EXPANSION.values())
     assert all(v >= 0 for v in H.ROYALTY.values())
+
+
+def test_quota_operations_keep_their_size_and_capacity(steps):
+    """QUOTA_OPS (Chile's Atacama, 0.13.0): in a later year a step (size, cost, size_2024) keeps its size on the curve
+    while the others share the retiring total as in 2024; and the region's existing capacity holds the quota instead
+    of retiring that operation's share."""
+    from critmin_net import curves as C
+    out = C.supply_blocks(100.0, 10.0, 2.0, 0.0, [(30.0, 5.0, 40.0), (60.0, 8.0)], steps_total=50.0)
+    sizes = {round(a + 10.0, 6): s for s, a in out if s is not None}
+    assert sizes[5.0] == pytest.approx(30.0)                  # held at its quota
+    assert sizes[8.0] == pytest.approx(50.0 * 60.0 / 100.0)   # its 2024 share (60 of 100) of the retiring total
+    n = ('mine', 'Li', 'ROW')
+    ic_q = H.network(steps, knobs={"quotas": True})[1]["init_cap"][n]
+    ic_r = H.network(steps, knobs={"quotas": False})[1]["init_cap"][n]
+    ops, q = H.OPERATIONS[('mine', 'Li'), 'ROW'], H.QUOTA_OPS[('mine', 'Li'), 'ROW']
+    tot, rate = sum(sz for sz, _ in ops), H.KNOBS["retire"]['mine']
+    for y in (2030, 2035, 2040):
+        f = max(0.0, 1.0 - rate * (y - 2024))
+        base = ic_r[y] / f
+        extra = sum(by[y] - base * ops[i][0] / tot * f for i, by in q.items() if y in by)
+        assert ic_q[y] == pytest.approx(ic_r[y] + extra)
+    assert ic_q[2040] > ic_r[2040]                            # SQM-Codelco's 62 kt a year from 2031
+
+
+def test_pyromet_route_is_a_pooled_refinery(steps):
+    """PYRO (0.13.0): each NMC black mass has a pyromet+ route in refining beside hydromet+, recovering nickel and
+    cobalt at 98% (lithium and manganese lost), costed per kWh of black mass, pooled into one plant per region with
+    Umicore Hoboken's capacity in the allies; KNOBS["pyro"] False leaves it out."""
+    from critmin_net import battery as B
+    net, params = H.network(steps)[:2]
+    routes = [p for p in net["processes"] if p[0] == 'refine' and p[1].startswith('pyro_')]
+    assert routes and all(p[2] == 'Ni' for p in routes)
+    for q in routes:
+        c = q[1][5:]
+        h = ('refine', f"bm_{c}", 'Ni')
+        kh, kp = net["recipe"][h][('shred', f"bm_{c}")], net["recipe"][q][('shred', f"bm_{c}")]
+        assert kp == pytest.approx(kh / B.LIFECYCLE["recovery"]['Ni'] * 0.98)
+        assert set(net["coproducts"][q]) == {('refine', 'Co')}       # no lithium or manganese
+        assert net["cost"]['refine'][0][q[1:] + ('US', 2030)] == pytest.approx(H.PYRO["opex"]['US'] / kp)
+    first = routes[0] + ('ALLY',)
+    retiring = 1.0 - H.KNOBS["retire"]['refine'] * (2025 - 2024)    # existing refining retires, as hydromet+ does
+    assert params["init_cap"][first][2025] * H._pool_coef(net, first) == pytest.approx(7000.0 / 3.7 / 1000.0 * retiring)
+    assert not [p for p in H.network(steps, knobs={"pyro": False})[0]["processes"] if p[1].startswith('pyro_')]

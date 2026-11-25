@@ -46,14 +46,16 @@ def supply_blocks(Q0, P, e, offset=0.0, steps=None, steps_total=None, growth_cos
     so the anchor sits at a block boundary (calibrate() needs that). Later years (steps_total, the operations' own
     size, retiring): a merit order of every tranche sorted by cost: the operations at their own costs and size, the
     room up to Q0 at P (new capacity at the region's sourced cost; growth_cost, a greenfield cost, where given), and
-    the curve's blocks above Q0 at that cost x r."""
+    the curve's blocks above Q0 at that cost x r. A step (size, cost, size_2024) keeps its size as given in a later
+    year (an operation held at a quota, not retiring); the others share steps_total by their sizes, as in 2024."""
     if steps and steps_total is not None:          # a later year: merit order
-        tot = sum(s for s, _ in steps)
+        tot = sum(st[2] if len(st) > 2 else st[0] for st in steps)
         size_to = min(steps_total, Q0) if Q0 > 0 else 0.0
-        tr = [(s * size_to / tot if tot else 0.0, c) for s, c in steps]
+        tr = [(st[0], st[1]) if len(st) > 2 else (st[0] * size_to / tot if tot else 0.0, st[1]) for st in steps]
         gc = P if growth_cost is None else growth_cost
-        if Q0 > size_to:
-            tr.append((Q0 - size_to, gc))
+        used = sum(sz for sz, _ in tr)
+        if Q0 > used:
+            tr.append((Q0 - used, gc))
         if Q0 > 0:
             size, r = ladder(Q0, e, "supply")
             tr += [(float(sz), rr * gc) for sz, rr in zip(size, r) if rr > 1.0]
@@ -65,10 +67,10 @@ def supply_blocks(Q0, P, e, offset=0.0, steps=None, steps_total=None, growth_cos
     out = []
     base, lift = P, 0.0                            # the curve above Q0: ratios of `base`, from `lift` over P
     if steps:
-        tot = sum(s for s, _ in steps)
-        for s, c in sorted(steps, key=lambda x: x[1]):
-            out.append((s * Q0 / tot if tot else 0.0, offset + (c - P)))
-        base = max(c for _, c in steps)
+        tot = sum(st[0] for st in steps)
+        for st in sorted(steps, key=lambda x: x[1]):
+            out.append((st[0] * Q0 / tot if tot else 0.0, offset + (st[1] - P)))
+        base = max(st[1] for st in steps)
         lift = base - P
     if Q0 > 0:
         size, r = ladder(Q0, e, "supply")
