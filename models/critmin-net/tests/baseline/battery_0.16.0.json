@@ -1,0 +1,5 @@
+{
+ "note": "The battery model's objectives at 0.16.0 (IE-132612, Gurobi 14.0.0), which tests/test_solver.py::test_battery_numbers_unchanged compares against to 1e-6. Identical to 0.15.1's. A change that moves them on purpose regenerates this file and says why in the commit and CHANGELOG.md.",
+ "battery_run_objective": 142530.178193,
+ "horizon_cost_steps_objective": -5358617.699836
+}

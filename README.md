@@ -6,26 +6,43 @@ All network-optimization models for battery-mineral and lithium supply chains, p
 
 **The lab's network model is [`models/critmin-net/`](models/critmin-net/).** It is the one
 maintained version; any network model elsewhere in the lab should derive from it (its README says
-how). The other folders are kept as they came.
+how). The other folders are kept as they came, as the record of how it got here.
+
+## How to cite
+
+Cite the release you used (`CITATION.cff`; GitHub's "Cite this repository" gives the formats):
+
+```bibtex
+@software{jones_critmin_network_models,
+  author  = {Jones, Erick C., Jr.},
+  title   = {critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)},
+  version = {0.16.0},
+  year    = {2026},
+  url     = {https://github.com/sear-labs/critmin-network-models}
+}
+```
+
+## Licence
+
+Code: MIT (`LICENSE`). Data (each model's `data/` folder): CC BY 4.0. Every number in critmin-net's data names
+its source (`models/critmin-net/src/critmin_net/data/SOURCES.md`).
 
 ## Layout
 
 | Folder | What it is | Source |
 |---|---|---|
-| `models/critmin-net/` | **The lab model.** One engine for supply-chain networks passed as data: Alavi's six-stage lithium network (reproduces her notebook to 1e-6, with scenario hooks and a published-source calibration on LLNL's regions), and a multi-mineral lithium-ion battery network projected to 2040 on supply, demand and cost curves, with recycling, mine expansions and royalties, US tariffs, 45X and China's export controls ([docs/battery-horizon.md](models/critmin-net/docs/battery-horizon.md)). | `critmin-energy-surrogatecoupling` @ `5c3616a`, then developed here |
+| `models/critmin-net/` | **The lab model.** One engine for supply-chain networks passed as data (it began as a port of Alavi's six-stage lithium network, retired in 0.16.0), and a multi-mineral lithium-ion battery network projected to 2040 on supply, demand and cost curves, with recycling, mine expansions and royalties, US tariffs, 45X and China's export controls ([docs/battery-horizon.md](models/critmin-net/docs/battery-horizon.md)). | `critmin-energy-surrogatecoupling` @ `5c3616a`, then developed here |
 | `models/six-stage-mineralnet/` | Alavi's six-stage (mine → recycling) multi-region model as of 2026-10-06, exploratory: the original the lab model derives from. Her live repo is `mineralnet-optsc`. | `mineralnet-optsc` (main branch) |
 | `rff-trade-exposure/` | RFF Critical Mineral Lab: import exposure, FEOC, friendshoring | `critmin-tradeexposure` |
 | `archive/lithiumsc-experiments/` | Archived lithium formulation lineage (12 notebooks, 3 papers, data). Kept for reference, not maintained. | `lithiumsc-experiments` (archived) |
 | `game-theory/` | Not here. Bilevel and Benders formulations live in `sear-labs/lithium-gametheory`. | `lithium-bilevel` (renamed) |
 | `tools/credscan.py` | Credential scanner. Run before every commit. | `mineralnet-optsc` |
 
-## Credentials
+## Gurobi
 
-The exploratory notebooks read the Gurobi licence from environment variables (`GUROBI_WLSACCESSID`,
-`GUROBI_WLSSECRET`, `GUROBI_LICENSEID`), never from a literal in a notebook; `models/critmin-net/` uses whatever
-licence gurobipy finds (a licence file). The archived
-notebooks were scrubbed of their original literals when migrated here. Those literals remain in
-the git history of the archived repos, so they MUST be rotated at the Gurobi portal (not yet confirmed).
+Solving needs a Gurobi licence. `models/critmin-net/` uses whatever licence gurobipy finds (a licence file); the
+exploratory notebooks read one from environment variables (`GUROBI_WLSACCESSID`, `GUROBI_WLSSECRET`,
+`GUROBI_LICENSEID`). No credential is in this repository (`tools/credscan.py` checks every commit).
 
 ## Status
 

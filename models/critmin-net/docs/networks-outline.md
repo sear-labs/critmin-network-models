@@ -51,7 +51,7 @@ Still to do:
   second life on a curve, pyromet+ built but off until costed*);
 - chemistry choice as bounded route shares (*0.12.0: within a band of IEA's mix by region*);
 - a decision on whether it replaces the lithium network in the working repo. The lithium network stays as it
-  is for paper 2.
+  is for paper 2 (*0.16.0: retired from critmin-net's main; paper 2 keeps it through its pin on 0.15.x*).
 
 Energy-model link: stationary storage, already in place.
 
@@ -192,4 +192,4 @@ All four agreed:
   part of it: copper, aluminium, steel, iron, phosphate, manganese and the like. They get simple supply at a
   price, not a full chain.
 - **The battery network replaces the lithium network in the working repo.** This is task one; the lithium
-  network stays for paper 2's committed numbers.
+  network stays for paper 2's committed numbers (*0.16.0: retired here; the working repo's pin on 0.15.x keeps it*).

@@ -1,9 +1,0 @@
-stage,region,usd,unit,source
-proc,US,24.95,per kg precursor (after margin),"Kleiner, Karaduman & Xu, Where Are Lithium-Ion Batteries Cheapest to Manufacture?, Stanford GSB technical report (2024, updated 2026-02-02), Excel model"
-proc,CHN,23.89,per kg precursor (after margin),same
-cath,US,42.64,per kWh cathode (after margin),same
-cath,CHN,39.36,per kWh cathode (after margin),same
-cell,US,92.03,per kWh cell (after margin),same
-cell,CHN,79.04,per kWh cell (after margin),same
-pack,US,25.96,per kWh pack (system less cell),same
-pack,CHN,22.29,per kWh pack (system less cell),same

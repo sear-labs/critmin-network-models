@@ -541,3 +541,81 @@ def test_process_lead_ceiling_and_pooled_reserves():
     assert sum(h["prod"][n, y].X for n in (us, chn) for y in Y) <= 3.0 + 1e-6
     with pytest.raises(ValueError):
         _status(net2, params2, reserves={(us, ('mine', 'Li', 'XX')): 3.0})
+
+
+# ---- engine checks the lithium network used to carry (0.16.0): balances, losses, the stockpile
+
+def test_every_good_has_one_balance_per_region_and_year():
+    """build() makes the balances from the network's goods: one row per good, region and year."""
+    net, params = toy()
+    m = gp.Model(); m.Params.OutputFlag = 0
+    _, h = N.build(m, params, net=net)
+    assert set(h["bal_all"]) == {(g, r, y) for g in net["goods"] for r in R for y in Y}
+
+
+def test_losses_are_checked():
+    """A loss names a stage, process or node with inputs, and is a share in [0, 1)."""
+    net, _ = toy()
+    p = ('cell', 'Li', 'GWh')
+    N.check_losses({'cell': 0.1, p: {2025: 0.05}, p + ('US',): 0.0}, net, R)
+    for bad in ({'mine': 0.1}, {'cell': 1.0}, {'cell': -0.1}, {('nope',): 0.1}, {p + ('Mars',): 0.1}):
+        with pytest.raises(ValueError):
+            N.check_losses(bad, net, R)
+
+
+def test_losses_cost_more():
+    """A bigger cell loss costs more: more of everything upstream is made."""
+    net, params = toy()
+    assert (N.solve(params, net=net, losses={'cell': 0.3})["obj"]
+            > N.solve(params, net=net, losses={'cell': 0.1})["obj"])
+
+
+@pytest.mark.parametrize("bad", [{"stages": ["nope"]}, {"regions": ["MARS"]}, {"hold": 0.1}])
+def test_stockpile_options_are_checked(bad):
+    """A misspelt or impossible stockpile option is refused, not ignored."""
+    net, params = toy()
+    with pytest.raises(ValueError):
+        N.build(gp.Model(), params, net=net, stockpile=bad)
+
+
+def test_stockpile_off_adds_nothing():
+    """Off (the default), the model is the one without the hook: same variables and constraints."""
+    net, params = toy()
+    sizes = []
+    for kw in ({}, {"stockpile": None}):
+        m = gp.Model(); m.Params.OutputFlag = 0
+        N.build(m, params, net=net, **kw); m.update()
+        sizes.append((m.NumVars, m.NumConstrs))
+    assert sizes[0] == sizes[1]
+
+
+CUT = {('refine', r): {2025: 0.0} for r in R}      # no refining anywhere in 2025, known in advance
+STOCK = {"regions": "all", "stages": ["refine"]}
+
+
+def test_stockpile_bridges_a_cut_it_sees_coming():
+    """With refining shut in 2025 and no unmet demand allowed, the toy is infeasible unless refined lithium is
+    stocked in 2024 and drawn in 2025. Its holding cost is hold_share x the good's value (2.0: mine and refinery)."""
+    net, params = toy()
+    assert "obj" not in N.solve(params, net=net, limits=CUT)
+    r = N.solve(params, net=net, limits=CUT, stockpile=STOCK)
+    held = {k: v for k, v in r["stock"].items() if k[:2] == ('refine', 'Li')}
+    assert sum(v for k, v in held.items() if k[3] == 2024) > 0, "nothing stocked ahead of the cut"
+    assert sum(v for k, v in held.items() if k[3] == 2025) < sum(v for k, v in held.items() if k[3] == 2024)
+    assert r["hold_cost"] == pytest.approx(0.10 * 2.0 * sum(r["stock"].values()), rel=1e-6)
+
+
+def test_stockpile_not_held_without_a_reason():
+    """With no cut, holding only costs: nothing is held and the cost is the model's without the hook."""
+    net, params = toy()
+    r = N.solve(params, net=net, stockpile=STOCK)
+    assert r["stock"] == {} and r["obj"] == pytest.approx(N.solve(params, net=net)["obj"], rel=1e-9)
+
+
+def test_stockpile_ends_where_it_started():
+    """A starting stock may be used along the way, but none in the last year, and the end holds at least the start."""
+    net, params = toy()
+    key = ('refine', 'Li', 'US')
+    r = N.solve(params, net=net, stockpile=dict(STOCK, initial={key: 5.0}))
+    held = {y: r["stock"].get(key + (y,), 0.0) for y in Y}
+    assert held[max(Y)] >= 5.0 - 1e-6 and held[max(Y)] >= held[max(Y) - 1] - 1e-6

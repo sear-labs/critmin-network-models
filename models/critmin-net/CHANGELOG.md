@@ -3,6 +3,36 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.16.0 (2026-11-25)
+
+**The lithium network is retired.** critmin-net began as a port of Alavi's six-stage lithium network; the battery
+network replaced it, and every test now runs on the current model. The lithium network remains in history (0.15.x).
+The battery model's numbers are unchanged: the same objectives and exported tables for the battery network, its
+calibration, and the horizon's cases, before and after.
+
+- **Removed from `network.py`:** Alavi's table readers (`load_data`, `data`, `CRITMIN_ALAVI_DATA`, `HAS_ALAVI`), the
+  lithium sets (`LITHIUM`, `GOODS`, `PROCESSES`, `RECIPE` and the rest), her parameters (`NOTEBOOK`, `PUBLISHED`),
+  `check_agreement()`, the lithium calibration (`calibrated()`, `shares_2024()`, `pipeline_shares()`, `ramp_rates()`,
+  `grid_demand()`), paper 2's cell prices (`us_cell_price()`, `us_cell_prices()`), and the hooks only the lithium
+  network used: `extra_cell_demand`, `tactics`, `yields`, `cobalt`, `ev_scale`, and the params `fixed_cap`, `pipeline`,
+  `ramp`, `ramp_floor`, `grid_demand`, `tariff_advalorem` and `shortage_mult_region`. `extra_demand` and `tariffs` do
+  what the first and fourth did, on any network.
+- **build() needs a network and its params** (no default network). `ship_value_share` defaults to
+  `SHIP_VALUE_SHARE` (it was her per-unit shipping cost). The stockpile's `stages` default to every stage of the
+  network. `results()` keeps the generic results (cost, unmet demand, stock, purchases, output by stage, duals) and
+  drops the lithium summaries (cell shares, US imports, coupled-year cell output, the build pattern, cell duals).
+- **Removed data:** Alavi's inputs and reference solution (already out of the tree) and five of six calibration
+  tables (`capacity_pipeline`, `grid_storage`, `regional_shares_2024`, `stage_costs_us_china`, `us_tariffs_2024`).
+  `country_shares_2024.csv`, which the battery network reads, stays. The manifest lists 33 files.
+- **Tests:** the 13 lithium tests and their baseline (`working_repo_5c3616a.json`) are gone, with
+  `scripts/reference_sara_network.py`, the `alavi` marker and `tests/conftest.py`. The engine checks they carried
+  (one balance per good, region and year; losses checked and costing more; the stockpile's options, its bridging a cut
+  it sees coming, its holding cost, and its end condition) now run on the toy network in `test_lifecycle.py`, which
+  the pip wheel's licence solves. New: `test_battery_numbers_unchanged` compares the battery network's and the
+  horizon's objectives with `tests/baseline/battery_0.16.0.json`.
+- **For the working repository** (critmin-energy-surrogatecoupling): paper 2's code calls `calibrated()` and
+  `us_cell_price()`, so its pin must stay on 0.15.x until it moves to the battery network.
+
 ## 0.15.1 (2026-11-25)
 
 - **The scenario set** (`scripts/battery_scenarios.py`, `scripts/battery_scenarios_summary.py`): 192 runs.
