@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 600" width="1180" height="600" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>critmin-net battery network: stages, flows and the recycling loop</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1baf7a"/>
+    </marker>
+    <style>
+      .box { fill: #f3f2ee; stroke: #52514e; stroke-width: 1.2; rx: 6; }
+      .rec { fill: #e8f6f0; stroke: #1baf7a; stroke-width: 1.2; rx: 6; }
+      .dem { fill: #fdeee7; stroke: #eb6834; stroke-width: 1.2; rx: 6; }
+      .h { font-size: 13px; font-weight: 600; fill: #0b0b0b; }
+      .t { font-size: 11.5px; fill: #0b0b0b; }
+      .s { font-size: 10.5px; fill: #52514e; }
+      .ln { stroke: #52514e; stroke-width: 1.4; fill: none; marker-end: url(#a); }
+      .lg { stroke: #1baf7a; stroke-width: 1.6; fill: none; marker-end: url(#g); }
+      .ld { stroke: #eb6834; stroke-width: 1.4; fill: none; stroke-dasharray: 4 3; marker-end: url(#a); }
+    </style>
+  </defs>
+  <rect width="1180" height="600" fill="#fcfcfb"/>
+
+  <!-- column headers -->
+  <text class="h" x="20" y="28">Base materials</text>
+  <text class="h" x="160" y="28">Mining</text>
+  <text class="h" x="300" y="28">Refining</text>
+  <text class="h" x="455" y="28">Precursor · anode</text>
+  <text class="h" x="625" y="28">Cathode</text>
+  <text class="h" x="770" y="28">Cells</text>
+  <text class="h" x="905" y="28">End uses</text>
+  <text class="h" x="1050" y="28">Retired</text>
+  <text class="s" x="20" y="46">every box: one node in each of 5 regions (China, US, allies, rest of world, DRC); goods trade between regions on every arc but end uses and retired products</text>
+
+  <!-- base -->
+  <rect class="box" x="20" y="70" width="110" height="78"/>
+  <text class="t" x="30" y="90">manganese ore</text><text class="t" x="30" y="108">iron</text><text class="t" x="30" y="126">phosphorus</text>
+  <text class="s" x="30" y="142">bought on supply curves</text>
+
+  <!-- mining -->
+  <rect class="box" x="160" y="70" width="110" height="122"/>
+  <text class="t" x="170" y="90">lithium</text><text class="t" x="170" y="108">nickel</text>
+  <text class="t" x="170" y="126">cobalt (DRC; and</text><text class="t" x="170" y="142">  with nickel)</text>
+  <text class="t" x="170" y="160">natural graphite</text>
+  <text class="s" x="170" y="182">within reserves</text>
+
+  <text class="s" x="20" y="290">Mines: brownfield expansions beside them where sourced</text>
+  <text class="s" x="20" y="304">(own capital cost and lead, room for half of 2024's);</text>
+  <text class="s" x="20" y="318">royalties and lease payments in every mining cost.</text>
+
+  <!-- refining -->
+  <rect class="box" x="300" y="70" width="125" height="122"/>
+  <text class="t" x="310" y="90">lithium chemicals</text><text class="t" x="310" y="108">nickel sulphate</text>
+  <text class="t" x="310" y="126">cobalt sulphate</text><text class="t" x="310" y="144">manganese sulphate</text>
+  <text class="s" x="310" y="166">battery grade</text>
+
+  <!-- precursor / anode -->
+  <rect class="box" x="455" y="70" width="135" height="70"/>
+  <text class="t" x="465" y="90">pCAM (NMC)</text><text class="t" x="465" y="108">iron phosphate (LFP)</text>
+  <text class="s" x="465" y="128">precursor</text>
+  <rect class="box" x="455" y="160" width="135" height="58"/>
+  <text class="t" x="465" y="180">anode material</text><text class="s" x="465" y="198">natural or synthetic</text><text class="s" x="465" y="211">graphite (one plant)</text>
+
+  <!-- cathode -->
+  <rect class="box" x="625" y="70" width="115" height="88"/>
+  <text class="t" x="635" y="90">high-nickel NMC</text><text class="t" x="635" y="108">low-nickel NMC</text>
+  <text class="t" x="635" y="126">LFP</text><text class="s" x="635" y="148">lithium + precursor</text>
+
+  <!-- cells -->
+  <rect class="box" x="770" y="70" width="105" height="148"/>
+  <text class="t" x="780" y="90">GWh by</text><text class="t" x="780" y="106">chemistry</text>
+  <text class="s" x="780" y="128">cathode + anode</text><text class="s" x="780" y="144">one line, any</text><text class="s" x="780" y="158">chemistry</text>
+  <text class="s" x="780" y="180">scrap: 10% (2023)</text><text class="s" x="780" y="194">to 6% (2030)</text>
+
+  <!-- end uses -->
+  <rect class="dem" x="905" y="70" width="115" height="148"/>
+  <text class="t" x="915" y="90">EVs</text><text class="t" x="915" y="108">storage</text><text class="t" x="915" y="126">electronics</text><text class="t" x="915" y="144">other</text>
+  <text class="s" x="915" y="168">demand curves</text><text class="s" x="915" y="182">(IEA to 2040);</text><text class="s" x="915" y="196">chemistry a choice</text><text class="s" x="915" y="210">within a band</text>
+
+  <!-- retired -->
+  <rect class="box" x="1050" y="70" width="110" height="148"/>
+  <text class="t" x="1060" y="90">retired packs</text><text class="t" x="1060" y="106">by use and</text><text class="t" x="1060" y="122">chemistry</text>
+  <text class="s" x="1060" y="142">retire by age</text><text class="s" x="1060" y="156">(Weibull lives:</text><text class="s" x="1060" y="170">EVs 15-20 yrs,</text><text class="s" x="1060" y="184">storage 10)</text><text class="s" x="1060" y="204">yard: held year</text><text class="s" x="1060" y="216">to year (from 2025)</text>
+
+  <!-- main flows -->
+  <path class="ln" d="M75,148 C75,222 260,222 330,194"/>
+  <path class="ln" d="M100,70 C100,56 480,56 505,68"/>
+  <path class="ln" d="M270,100 L298,100"/>
+  <path class="ln" d="M270,165 C290,218 430,218 453,200"/>
+  <path class="ln" d="M425,110 L453,100"/>
+  <path class="ln" d="M425,90 C520,40 580,50 623,82"/>
+  <path class="ln" d="M590,100 L623,105"/>
+  <path class="ln" d="M740,110 L768,110"/>
+  <path class="ln" d="M590,190 L768,190"/>
+  <path class="ln" d="M875,140 L903,140"/>
+  <path class="ln" d="M1020,140 L1048,140"/>
+
+  <!-- other uses -->
+  <rect class="dem" x="300" y="232" width="125" height="44"/>
+  <text class="t" x="310" y="250">other uses</text><text class="s" x="310" y="266">glass, steel, alloys...</text>
+  <path class="ld" d="M340,192 L340,230"/>
+  <path class="ld" d="M250,192 C250,250 270,256 298,256"/>
+  <text class="s" x="440" y="262">demand curves (2024 levels)</text>
+
+  <!-- recycling loop -->
+  <text class="h" x="20" y="340" fill="#0b7a54">Recycling and second life</text>
+  <rect class="rec" x="1015" y="300" width="150" height="72"/>
+  <text class="t" x="1025" y="320">second life</text><text class="s" x="1025" y="336">EV packs as storage: up to</text><text class="s" x="1025" y="350">80% viable, on a cost</text><text class="s" x="1025" y="364">curve (5% in 2023-24)</text>
+  <rect class="rec" x="700" y="420" width="220" height="76"/>
+  <text class="t" x="710" y="440">shredding to black mass</text><text class="s" x="710" y="456">one stage, where packs retire; open</text><text class="s" x="710" y="470">but costed; black mass traded, or</text><text class="s" x="710" y="484">held in a yard, or left unprocessed</text>
+  <rect class="rec" x="380" y="410" width="215" height="62"/>
+  <text class="t" x="390" y="430">hydromet+ (to refined chemicals)</text><text class="s" x="390" y="446">IEA 2023 capacity; built at its capital</text><text class="s" x="390" y="460">cost only where it pays (45X counts)</text>
+  <rect class="rec" x="380" y="479" width="215" height="38" stroke-dasharray="4 3"/>
+  <text class="t" x="390" y="495">pyromet+ (alloy, refined to Ni, Co)</text>
+  <text class="s" x="390" y="510">EverBatt costs; Li, Mn lost; seldom pays</text>
+
+  <path class="lg" d="M1105,218 L1105,298"/>
+  <path class="lg" d="M1015,336 C990,336 990,290 975,222"/>
+  <path class="lg" d="M1080,218 C1060,400 980,440 922,450"/>
+  <path class="lg" d="M822,218 C822,300 820,380 815,418"/>
+  <text class="s" x="830" y="300">manufacturing scrap</text>
+  <path class="lg" d="M700,445 L597,445"/>
+  <path class="lg" d="M700,480 C650,500 640,500 597,500" stroke-dasharray="4 3"/>
+  <path class="lg" d="M470,410 C470,320 440,240 418,195"/>
+  <path class="lg" d="M380,498 C340,498 330,330 380,195" stroke-dasharray="4 3"/>
+  <text class="s" x="478" y="360">metals back to refining</text>
+  <text class="s" x="478" y="374">(the main metal and co-products)</text>
+
+  <!-- curves legend -->
+  <rect x="20" y="520" width="1140" height="64" fill="none" stroke="#e4e3df"/>
+  <text class="t" x="32" y="542">Every grey box is on a supply (cost) curve in each region and year: known operations at their own costs, new capacity at the region's cost after its lead time</text>
+  <text class="t" x="32" y="560">(US and allies long, China short, rest of world shortest for mines), rising beyond; costs move on low, mid or high paths. Orange boxes are demand curves.</text>
+  <text class="t" x="32" y="578">2023-2024 are observed and calibrated; tariffs (by good, exporter, year) sit on the trade arcs, 45X on US production; a region exports only what it makes.</text>
+</svg>
