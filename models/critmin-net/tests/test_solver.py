@@ -371,3 +371,221 @@ def test_battery_run_with_focus():
     with pytest.raises(ValueError):
         B.zoom(['Li', 'Ni', 'Co', 'Mn', 'graphite'])
 
+
+# ---- 0.11.0 and 0.12.0: the battery horizon to 2040, on curves
+
+@pytest.fixture(scope="module")
+def horizon():
+    from critmin_net import battery as B
+    from critmin_net import horizon as H
+    inp = H.load("STEPS")
+    cal = H.calibrate(inp)
+    return H, B, inp, cal, {sc: H.run(sc, inputs=inp, cal=cal) for sc in ("cost", "onshore")}
+
+
+def test_horizon_calibrates_the_observed_years(horizon):
+    """calibrate(): every group's output in every region and observed year within 0.5% of its stage's output of the
+    observed share (graphite mining 4%: the anode's natural/synthetic split is not observed), and the full horizon
+    reproduces the same regional shares (its totals may move a little: the chemistry band in the observed years)."""
+    H, B, inp, cal, res = horizon
+    assert cal["miss"] < 1.0
+    gt = {}
+    for (g, r, y), x in cal["target"].items():
+        gt[g, y] = gt.get((g, y), 0.0) + x
+    for r in res.values():
+        assert r["status"] == 2 and r["short"] == {}
+        for (g, rg, y), x in cal["target"].items():
+            tot = sum(r["prod"].get(g + (q, y), 0.0) for q in B.REGIONS)
+            if gt[g, y] > 0 and tot > 0:
+                tol = H.CAL_TOL.get(g, H.CAL_TOL[None])
+                assert abs(r["prod"].get(g + (rg, y), 0.0) / tot - x / gt[g, y]) <= tol + 1e-6
+
+
+def test_horizon_builds_wait_for_their_region_lead(horizon):
+    """Nothing built serves before its region's lead allows (an expansion's own lead; decisions from 2023) or in the
+    observed years."""
+    H, B, inp, cal, res = horizon
+    for r in res.values():
+        for (s, key, rg, y), v in r["built"].items():
+            lead = (H.EXPANSION[key, rg]["lead"] if s == 'expand' else H.LEAD['refine' if s in ('hydromet', 'pyro') else s][rg])
+            assert y >= min(H.YEARS) + lead and y > max(B.YEARS)
+
+
+def test_horizon_demand_answers_to_its_curves(horizon):
+    """After 2024 every end use is a demand curve anchored at IEA's projection: what is served is within the curve's
+    range (a quarter to four times the anchor's price) and near the anchor, and nothing is a fixed amount."""
+    H, B, inp, cal, res = horizon
+    D = inp["demand"]
+    r = res["cost"]
+    for y in (2030, 2040):
+        for u in B.USES:
+            iea = sum(v for (uu, c, rr, yy), v in D.items() if uu == u and yy == y)
+            got = sum(v for (g, rr, yy), v in r["served"].items() if g == ('use', u) and yy == y)
+            assert 0.5 * iea <= got <= 2.0 * iea
+
+
+def test_horizon_onshoring_floors_hold_and_cost_more(horizon):
+    """onshore: from 2030 the US and allies make at least the floor share of their own demand at every processing and
+    manufacturing group (mines have none), and the plan costs more than the cost-based one."""
+    H, B, inp, cal, res = horizon
+    D = inp["demand"]
+    r = res["onshore"]
+    for y in H.YEARS:
+        if y < min(H.ONSHORE):
+            continue
+        f = H._line(H.ONSHORE, y) * (sum(v for k, v in D.items() if k[3] == y and k[2] in H.US_ALLY)
+                                     / sum(v for k, v in D.items() if k[3] == y))
+        for g in {k[:2] for k in r["prod"] if k[0] != 'mine'}:
+            tot = sum(r["prod"].get(g + (q, y), 0.0) for q in B.REGIONS)
+            ua = sum(r["prod"].get(g + (q, y), 0.0) for q in H.US_ALLY)
+            assert ua >= f * tot - 1e-6 * max(tot, 1.0)
+    assert r["cost"] > res["cost"]["cost"]
+
+
+def test_horizon_myopic_runs_and_costs_no_less(horizon):
+    """Myopic (five years in view) solves, and seeing less ahead costs at least as much as perfect foresight."""
+    H, B, inp, cal, res = horizon
+    r = H.run("cost", inputs=inp, cal=cal, foresight=5)
+    assert r["status"] == 2
+    assert r["obj"] >= res["cost"]["obj"] - 1e-6 * abs(res["cost"]["obj"])
+
+
+# ---- 0.13.0: rules of origin, the DRC, export controls and 45X's foreign-entity rule
+
+@pytest.fixture(scope="module")
+def horizon_policy(horizon):
+    H, B, inp, cal, _ = horizon
+    cases = {"policy": {}, "feoc": {"feoc": True}, "controls": {"china_controls": {"from_year": 2027}}}
+    return {k: H.run("cost", inputs=inp, cal=cal, policy=v) for k, v in cases.items()}
+
+
+def _flows(r, stage, y, exp=None, imp=None):
+    return sum(v for (s, _, e, i, yy), v in r["trade"].items()
+               if s == stage and yy == y and (exp is None or e == exp) and (imp is None or i == imp))
+
+
+def _made(r, stage, region, y):
+    return sum(v for k, v in r["prod"].items() if k[0] == stage and k[-2] == region and k[-1] == y)
+
+
+def test_horizon_regions_export_only_what_they_make(horizon, horizon_policy):
+    """Rules of origin (every year): no region exports more of a stage's goods than it made, so nothing passes
+    through a low-tariff region (before 0.13.0 the US bought China's cathode through the DRC; before 0.15.0 its cells
+    and anode in 2023-2024)."""
+    H, B, inp, cal, res = horizon
+    for r in [res["cost"], *horizon_policy.values()]:
+        for y in H.YEARS:
+            for s in ('mine', 'refine', 'pcam', 'cath', 'anode', 'cell'):
+                for g in B.REGIONS:
+                    assert _flows(r, s, y, exp=g) <= _made(r, s, g, y) + 1e-4 * max(1.0, _made(r, s, g, y))
+
+
+def test_horizon_drc_builds_no_midstream_by_default(horizon, horizon_policy):
+    """KNOBS no_entry: the DRC makes no precursor, cathode, anode or cells (it has none, none is announced), even with
+    the US's tariffs on everyone else."""
+    H, B, inp, cal, res = horizon
+    for r in [res["cost"], *horizon_policy.values()]:
+        for y in H.YEARS:
+            for s in ('pcam', 'cath', 'anode', 'cell'):
+                assert _made(r, s, 'SPC', y) <= 1e-6
+
+
+def test_horizon_china_controls_close_its_exports_to_the_us(horizon_policy):
+    """china_controls from 2027: China sells the US no graphite, anode, cathode, precursor or cells, and the US is
+    still served (from its own plants and other regions)."""
+    r = horizon_policy["controls"]
+    assert r["status"] == 2 and r["short"] == {}
+    for (s, g, e, i, y), v in r["trade"].items():
+        if e == 'CHN' and i == 'US' and y >= 2027 and (s in ('anode', 'cath', 'pcam', 'cell') or g == 'graphite'):
+            assert v <= 1e-6
+
+
+def test_horizon_feoc_caps_chinese_inputs_to_us_cells(horizon, horizon_policy):
+    """45X's foreign-entity rule (PL 119-21): in each year cells earn the credit, US cell plants take at most
+    (1 - threshold) of their cathode and anode from China, and complying costs no less than the policy without it."""
+    from critmin_net import policy as P
+    H, B, inp, cal, _ = horizon
+    r, p = horizon_policy["feoc"], horizon_policy["policy"]
+    th, cr = P.feoc_thresholds(H.YEARS)['component'], P.credits(H.YEARS, "PL 119-21")['cell']
+    for y in H.YEARS:
+        if y in B.YEARS or th[y] <= 0 or cr[y] <= 0:
+            continue
+        chn = sum(_flows(r, s, y, exp='CHN', imp='US') for s in ('cath', 'anode'))
+        take = sum(_made(r, s, 'US', y) + _flows(r, s, y, imp='US') - _flows(r, s, y, exp='US') for s in ('cath', 'anode'))
+        assert chn <= (1 - th[y]) * take + 1e-4 * max(1.0, take)
+    assert r["obj"] >= p["obj"] - 1e-6 * abs(p["obj"])
+
+
+def test_horizon_drc_cobalt_quota_and_expansions_hold(horizon, horizon_policy):
+    """With policy, the DRC exports at most its quota of cobalt (96.6 kt from 2026); in every case brownfield
+    expansions stay within their room (EXPANSION share x 2024's capacity) and only where an expansion is sourced."""
+    from critmin_net import policy as P
+    H, B, inp, cal, res = horizon
+    q = P.drc_cobalt_quota(H.YEARS)
+    r = horizon_policy["policy"]
+    for y, cap in q.items():
+        ex = sum(v for (s, g, e, i, yy), v in r["trade"].items() if g == 'Co' and e == 'SPC' and yy == y)
+        assert ex <= cap + 1e-6
+    for rr in [res["cost"], *horizon_policy.values()]:
+        for (m, rg, y), v in rr["expanded"].items():
+            assert (m, rg) in H.EXPANSION
+            room = H.EXPANSION[m, rg]["share"] * rr["cap"].get(('mine', m, rg, max(B.YEARS)), 0.0)
+            assert v <= room + 1e-6 * max(1.0, room)
+
+
+def test_horizon_export_is_what_cem_impacts_reads(horizon, tmp_path):
+    """export.write(): one folder per run in cem-impacts' critmin-net export format (cem_impacts.adapters.critmin):
+    the files and columns it requires, process names that start with their stage code, one unit per good, no
+    duplicate keys, and amounts that add up to the run's own production and trade. When cem_impacts is installed,
+    its reader accepts the folder and validates it against the Flows contract."""
+    import json
+    import pandas as pd
+    from critmin_net import export as E
+    H, B, inp, cal, res = horizon
+    r = res["cost"]
+    f = E.write(r, tmp_path / "STEPS_cost", scenario="STEPS, no policy")
+    cols = {"production": ["stage", "process", "good", "region", "year", "amount", "unit"],
+            "trade": ["stage", "good", "origin", "destination", "year", "amount", "unit"],
+            "shortfall": ["stage", "good", "region", "year", "amount", "unit"],
+            "stock": ["stage", "good", "region", "year", "amount", "unit"],
+            "price": ["stage", "good", "region", "year", "price", "unit"]}
+    keys = {"production": ["process", "good", "region", "year"], "trade": ["stage", "good", "origin", "destination", "year"],
+            "shortfall": ["stage", "good", "region", "year"], "stock": ["stage", "good", "region", "year"],
+            "price": ["stage", "good", "region", "year"]}
+    meta = json.loads((f / "run.json").read_text(encoding="utf-8"))
+    assert meta["model"] == "critmin-net" and meta["status"] == "optimal" and meta["years"] == list(H.YEARS)
+    t = {n: pd.read_csv(f / f"{n}.csv", keep_default_na=False, na_values=[""]) for n in cols}
+    codes = {'base', 'mine', 'refine', 'pcam', 'anode', 'cath', 'cell', 'use', 'eol', 'scrap', 'shred'}
+    for n, df in t.items():
+        assert list(df.columns) == cols[n]
+        assert not df.duplicated(keys[n]).any()
+        if len(df):
+            assert set(df["stage"]) <= codes
+            assert set(df.get("region", df.get("origin"))) <= set(B.REGIONS)
+    p = t["production"]
+    assert (p["process"].str.split(":").str[0] == p["stage"]).all()
+    units = pd.concat([t[n][["stage", "good", "unit"]] for n in ("production", "trade", "stock")]).drop_duplicates()
+    assert not units.duplicated(["stage", "good"]).any()
+    for y in (2030, 2040):
+        for rg in B.REGIONS:
+            got = p[(p.stage == 'cell') & (p.region == rg) & (p.year == y)].amount.sum()
+            assert got == pytest.approx(r["prod"].get(('cell', 'cell', rg, y), 0.0), abs=1e-6)
+    assert t["trade"].amount.sum() == pytest.approx(sum(v for v in r["trade"].values() if v > 1e-9), rel=1e-9)
+    try:
+        from cem_impacts.adapters import critmin
+    except ImportError:
+        return
+    fl = critmin.read_export(f)
+    assert fl.network == "battery" and len(fl.production) == len(p)
+
+
+def test_horizon_yards_cost_to_hold(horizon):
+    """KNOBS yard_cost (0.15.0): holding retired packs and black mass costs Argonne's 150 USD per tonne a year, so
+    yards buffer rather than hoard. With it, little is left in them by 2040; free, thousands of GWh pile up."""
+    H, B, inp, cal, res = horizon
+    held = lambda r, y: sum(v for k, v in r["detail"]["stock"].items() if k[3] == y)
+    assert H.KNOBS["yard_cost"]['eol'] == pytest.approx(0.150 * 8.70)
+    free = H.run("cost", inputs=inp, cal=cal, knobs={"yard_cost": None})
+    assert held(res["cost"], 2040) < 0.2 * held(free, 2040)
+    assert sum(v for (q, y), v in res["cost"]["recycled"].items() if y == 2040) > \
+        sum(v for (q, y), v in free["recycled"].items() if y == 2040)
