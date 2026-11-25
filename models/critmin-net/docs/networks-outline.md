@@ -38,11 +38,18 @@ These come up in more than one network, so they belong in the engine, not in eac
 ### 3.1 Batteries (0.5.0; what is left)
 
 Still to do:
-- a projection horizon (about 2023-2040) with capacity built, not fixed;
-- real costs;
-- cobalt as a co-product of copper and nickel mining;
-- recycling capacity by region;
-- chemistry choice as bounded route shares;
+- a projection horizon (about 2023-2040) with capacity built, not fixed (*0.11.0, `horizon.py`: to 2040, IEA
+  demand, capital costs and lead times by stage and region, a cost-based and an onshoring scenario; 0.12.0: on
+  supply, demand and cost curves, with US tariffs and 45X; 0.13.0: rules of origin, 45X's foreign-entity rules,
+  China's export controls, the DRC's cobalt quota, brownfield expansions, greenfield costs and royalties; explained in
+  docs/battery-horizon.md*);
+- real costs (*sourced in 0.8.0, `data/battery_costs/`; PRELIMINARY: several are price spreads or single projects*);
+- calibration to the observed regional shares (*0.9.0, `battery.calibrate()`, 2023-2024; over the horizon, where
+  production goes after 2024 is the model's decision (Jones, 2026-11-23)*);
+- cobalt as a co-product of copper and nickel mining (*0.12.0: of nickel; the DRC's copper-cobalt mines primary*);
+- recycling capacity by region (*0.12.0: hydromet capacity and builds; shredding open but costed; 0.13.0: yards,
+  second life on a curve, pyromet+ built but off until costed*);
+- chemistry choice as bounded route shares (*0.12.0: within a band of IEA's mix by region*);
 - a decision on whether it replaces the lithium network in the working repo. The lithium network stays as it
   is for paper 2.
 
