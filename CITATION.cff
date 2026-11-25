@@ -8,7 +8,7 @@ authors:
     name-suffix: Jr.
     orcid: "https://orcid.org/0000-0003-0559-4699"
     affiliation: "University of Texas at Arlington"
-version: 0.16.1
+version: 0.17.0
 date-released: 2026-11-25
 license: MIT
 # data under models/critmin-net/src/critmin_net/data/: CC BY 4.0

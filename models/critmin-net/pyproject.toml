@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "critmin-net"
-version = "0.16.1"
+version = "0.17.0"
 description = "The SEAR Lab's critical-minerals supply-chain network model: the lithium-ion battery chain to 2040 on LLNL's regions."
 readme = "README.md"
 license = "MIT"

@@ -3,6 +3,19 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.17.0 (2026-11-25)
+
+- **`horizon.build(m, ...)`** adds the horizon to a model another model can share (an energy model, in a joint
+  solve): returns (objective, handles, info). On top of the horizon's own options it takes `extra_demand` (another
+  model's purchases, as numbers or linear expressions), `limits` (the lower ceiling wins), `cap_max` (replaces a node's
+  ceiling) and `tariffs` (the higher rate wins). `run()` now builds through it; its results are unchanged (the same
+  objectives and, at a fixed `PYTHONHASHSEED`, byte-identical export tables).
+- **Ties depend on Python's hash seed.** Where the horizon has equally cheap plans, which one the solver returns can
+  change from one Python process to the next (set iteration order), with the objective unchanged. Set
+  `PYTHONHASHSEED` (e.g. 0) when tables must repeat exactly, as for scenario sets and cluster runs.
+- Tests: `horizon.build()` alone solves to `run()`'s objective, and one more GWh of US LFP cells a year costs what the
+  cell balances' duals say; its options merge as documented.
+
 ## 0.16.1 (2026-11-25)
 
 - The repository is public (Jones, 2026-11-25) and archived on Zenodo: `.zenodo.json` gives the deposit's metadata
