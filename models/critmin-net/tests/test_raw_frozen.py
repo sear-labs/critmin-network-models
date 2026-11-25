@@ -5,7 +5,7 @@ src/critmin_net/data/SOURCES.md, then `python scripts/freeze_raw.py` and a commi
 
 Watch it fail
 -------------
-    echo x >> src/critmin_net/data/calibration/us_tariffs_2024.csv
+    echo x >> src/critmin_net/data/calibration/country_shares_2024.csv
     pytest -q tests/test_raw_frozen.py       # MUST go red, naming that file
     git checkout src/critmin_net/data                    # restore
 """
@@ -26,7 +26,7 @@ def present():
 
 
 def test_manifest_is_not_empty():
-    assert len(listed()) >= 62, "MANIFEST.sha256 lists fewer files than the data folder was frozen with (62)"
+    assert len(listed()) >= 33, "MANIFEST.sha256 lists fewer files than the data folder carries (33 at 0.16.0)"
 
 
 def test_every_listed_file_is_present_and_unchanged():

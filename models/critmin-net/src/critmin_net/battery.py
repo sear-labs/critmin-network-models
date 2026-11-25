@@ -6,8 +6,8 @@ iron phosphate for LFP), anode, cathode and cells, into every lithium-ion end us
 portable electronics, other), and back: what is placed in an end use retires by age into an end-of-life good,
 retired EV packs may be repurposed as stationary storage (up to a share), and the rest, with manufacturing scrap,
 is shredded into black mass, which is traded and recycled into refined metals. On LLNL's regions plus "Special"
-(the DRC, for cobalt). Built by the same build() as the lithium model, with the network passed as data
-(network.LITHIUM and network's lifecycle notes explain the format). It is not a calibration: the quantities are
+(the DRC, for cobalt). Built by network.build(), with the network passed as data (network's notes above build()
+explain the format). It is not a calibration: the quantities are
 real, read from public sources (data/battery_2023_2024/, one row per number with its source; load() says how
 each is used). Costs are sourced too (data/battery_costs/, costs()): each stage's own cost per unit made, by region,
 in USD per kg (million USD per kt) or per kWh (million USD per GWh), so the objective is in million USD. They are
@@ -62,7 +62,7 @@ MINED = ['Li', 'Ni', 'Co', 'graphite']           # mined in the model, within re
 BASE = ['Mn', 'Fe', 'P']                         # base materials, bought at a price (kt contained)
 USES = ['ev', 'storage', 'electronics', 'other']
 STAGES = ['base', 'mine', 'refine', 'pcam', 'anode', 'cath', 'cell', 'use', 'eol', 'scrap', 'shred']
-HEADROOM = 1.20                                  # capacity over observed output, as in network.calibrated()
+HEADROOM = 1.20                                  # capacity over observed output (EV-share range, up to 1.16x)
 TIE = 0.01                                       # calibrate()'s slope for regions with no wedge, USD per kg or kWh
 OPEN = 1e9                                       # capacity where none is modelled (end uses, shredding)
 FEPO4_PER_LI = (55.845 + 30.974 + 4 * 15.999) / 6.94   # kg FePO4 per kg Li in LiFePO4 (standard atomic weights)
@@ -73,8 +73,8 @@ CUT['graphite'] = ('anode', 'anode')             # (graphite: anode material, so
 DATA = N.RAW / "battery_2023_2024"
 COSTS = N.RAW / "battery_costs"
 # How costs() fills a region data/battery_costs/selected.csv does not give: the US and allies at China's cost times
-# a ratio (these keys: RATIO's; others as given), the rest of the world halfway between China and the US (as
-# network.calibrated() prices it), the DRC at China's. Mines are given for every region.
+# a ratio (these keys: RATIO's; others as given), the rest of the world halfway between China and the US (no
+# published estimate; ours), the DRC at China's. Mines are given for every region.
 RATIO = dict(refine_Li='chem', refine_Ni='chem', refine_Co='chem', refine_Mn='chem', anode_natural='chem',
              anode_synthetic='chem', fepo4_conv='chem', shred='recycle_nmc', recycle_nmc='recycle_nmc',
              recycle_lfp='recycle_lfp')

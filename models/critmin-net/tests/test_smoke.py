@@ -5,34 +5,22 @@ import pytest
 
 def test_imports():
     from critmin_net import network as N
-    assert N.STAGES == ['mine', 'proc', 'cath', 'cell', 'pack', 'rec']
     assert N.LLNL_REGIONS == ['US', 'ALLY', 'CHN', 'ROW']
 
 
-def test_alavis_tables_load():
+def test_build_needs_a_network():
+    """The engine has no network of its own (the lithium network was retired in 0.16.0): build() needs one."""
+    gp = pytest.importorskip("gurobipy")
     from critmin_net import network as N
-    assert not N._read("index").empty
-    for stage in N.STAGES:
-        for kind in ("demand", "prod_cost", "fixed_cost", "var_cost"):
-            df = N._read(f"{stage}_{kind}")
-            num = df.select_dtypes("number")
-            assert not df.empty and not num.isna().any().any(), f"{stage}_{kind} has blanks"
-            assert (num >= 0).all().all(), f"{stage}_{kind} has negative values"
+    with pytest.raises(ValueError):
+        N.build(gp.Model(), {"regions": ["US"]})
 
 
-@pytest.mark.parametrize("name", ["capacity_pipeline", "country_shares_2024", "grid_storage",
-                                  "stage_costs_us_china", "us_tariffs_2024"])
-def test_calibration_tables_load(name):
+def test_calibration_shares_load():
+    """The 2024 shares by country the battery network starts its cathode and precursor capacity from."""
     from critmin_net import network as N
-    df = pd.read_csv(N.CAL / f"{name}.csv")
-    assert not df.empty
-
-
-def test_calibration_shares_cover_llnls_regions():
-    from critmin_net import network as N
-    sh = N.shares_2024()
-    assert set(sh[("demand", None)]) <= set(N.LLNL_REGIONS)
-    assert sum(sh[("demand", None)].values()) == pytest.approx(1.0, abs=1e-6)
+    df = pd.read_csv(N.CAL / "country_shares_2024.csv")
+    assert not df.empty and {"model_stage", "group", "value", "use"} <= set(df.columns)
 
 
 def test_a_named_data_folder_is_used(tmp_path):
@@ -51,53 +39,6 @@ def test_a_named_data_folder_without_a_manifest_is_refused(tmp_path):
 def test_unset_reads_the_shipped_copy():
     from critmin_net import network as N
     assert N.data_dir({}) == N.RAW and (N.RAW / "MANIFEST.sha256").is_file()
-
-
-@pytest.mark.parametrize("bad", [{"stages": ["rec"]}, {"regions": ["MARS"]}, {"hold": 0.1}])
-def test_stockpile_options_are_checked(bad):
-    """A misspelt or impossible stockpile option is refused, not ignored. Building needs no licence to solve."""
-    gp = pytest.importorskip("gurobipy")
-    from critmin_net import network as N
-    m = gp.Model(); m.Params.OutputFlag = 0
-    with pytest.raises(ValueError):
-        N.build(m, N.PUBLISHED, stockpile=bad)
-
-
-def test_stockpile_off_adds_nothing():
-    """Off (the default), the model is the one without the hook: same variables and constraints."""
-    gp = pytest.importorskip("gurobipy")
-    from critmin_net import network as N
-    sizes = []
-    for kw in ({}, {"stockpile": None}):
-        m = gp.Model(); m.Params.OutputFlag = 0
-        N.build(m, N.PUBLISHED, **kw); m.update()
-        sizes.append((m.NumVars, m.NumConstrs))
-    assert sizes[0] == sizes[1]
-
-
-def test_the_network_sets():
-    """Lithium's chain as sets: one mineral, a good per stage output, one input per process at Alavi's ratios."""
-    from critmin_net import network as N
-    assert N.MINERALS == ['Li']
-    assert len(N.GOODS) == len(set(N.GOODS)) == sum(len(v) for v in N.OUT_T.values())
-    assert ('proc', 'lce') in N.GOODS and ('rec', 'lce') in N.GOODS          # same name, different goods
-    assert N.MINERAL_OF[('mine', 'spod')] == 'Li' and N.MINERAL_OF[('cell', 'GWh_lfp')] is None
-    for p in N.PROCESSES:
-        if p[0] == 'mine':
-            assert N.RECIPE[p] == {}
-        else:
-            assert N.RECIPE[p] == {(N.STAGE_IN[p[0]], p[1]): N.RATIO[p[0]][p[2]]}
-    N._check_sets()
-
-
-def test_every_good_has_one_balance_per_region_and_year():
-    """build() makes the balances from GOODS: one row per good, region and year (Alavi's notebook regions)."""
-    gp = pytest.importorskip("gurobipy")
-    from critmin_net import network as N
-    m = gp.Model(); m.Params.OutputFlag = 0
-    _, h = N.build(m, N.NOTEBOOK)
-    cells = [g for g in N.GOODS if g[0] == 'cell']
-    assert len(h["cell_bal"]) == len(cells) * len(h["R"]) * len(h["Y"])
 
 
 def test_battery_inputs_load_and_hang_together():
@@ -119,16 +60,3 @@ def test_battery_inputs_load_and_hang_together():
     net, params, kw, need = B.network(inp)
     N.check_net(net)
     assert need[('Li', 2023)] > 0 and set(params["regions"]) == set(N.LLNL_REGIONS) | {'SPC'}
-
-
-
-def test_losses_are_checked():
-    """A loss names a stage, process or node with inputs, and is a share in [0, 1)."""
-    pytest.importorskip("gurobipy")
-    from critmin_net import network as N
-    nt, R = N.LITHIUM, N.LLNL_REGIONS
-    p = next(q for q in nt["processes"] if q[0] == 'cell')
-    N.check_losses({'cell': 0.1, p: {2030: 0.05}, p + ('US',): 0.0}, nt, R)
-    for bad in ({'mine': 0.1}, {'cell': 1.0}, {'cell': -0.1}, {('nope',): 0.1}, {p + ('Mars',): 0.1}):
-        with pytest.raises(ValueError):
-            N.check_losses(bad, nt, R)
