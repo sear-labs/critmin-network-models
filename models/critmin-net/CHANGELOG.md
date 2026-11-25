@@ -3,6 +3,45 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
+## 0.15.0 (2026-11-24)
+
+- **The cem-impacts export** (`critmin_net.export`): `write(run, folder, scenario)` writes one folder per solved run
+  in the format cem-impacts' critmin-net reader takes (`cem_impacts.adapters.critmin`, its Flows contract):
+  - `run.json` and `production.csv`: what each process made, co-products as their own rows, the process tuple
+    joined by ":";
+  - `trade.csv`, `shortfall.csv`, `stock.csv` (the yards) and `price.csv` (balance duals, undiscounted).
+
+  Names and units are critmin-net's own. `run()` returns the node-level `detail` this needs.
+  `scripts/battery_horizon.py` writes every case's export to `results/battery_horizon/export/`. A test checks the
+  format and that the amounts add up to the run's; it runs cem-impacts' own reader when that is installed. It passed
+  with the local clone at c17a8e7.
+- **Rules of origin in every year** (`KNOBS["rules_of_origin"]=True`). From 2025 only, the US had bought China's cells
+  and anode through the DRC in 2023-2024, so it paid no tariff. Graphite mining's calibration tolerance goes from 2%
+  to 4%, since its natural/synthetic split is not observed. 2040 results do not change.
+- **Yards cost to hold** (`KNOBS["yard_cost"]`, engine `stockpile["hold_unit"]`, a cost per unit held a year):
+  - The cost is Argonne's 150 USD per tonne a year (X165; an uncited assumption of theirs, for hybrid batteries, no
+    dollar year). That is 1.30 USD per kWh for retired packs (module mass) and 0.75 for black mass (cell mass).
+  - Holding had been free, since these goods carry no value: retired packs piled up to 3,200 GWh by 2040 and 2040
+    recycling fell to 1,035 GWh-equivalent. With the cost, about 170 GWh remain and 1,390 is recycled.
+  - Legal storage limits are recorded (X172-X178: a year in the US and China, three years in the EU), not imposed.
+  - The data are 14 rows, X165-X178, all checked (9 confirmed, 5 corrected).
+- `scripts/battery_sensitivity.py`: one knob at a time, low and high, against the default (not a Morris screen).
+  China's cell and refining shares hold under every knob. Lithium mining moves only with greenfield costs,
+  foresight and kept offsets. Cost moves with the discount rate, cost paths and supply elasticities.
+- **The 2025 backcast** (`scripts/battery_backcast.py`, `data/battery_horizon/backcast/`): 258 observed rows for
+  2024-2025 (cells, mining, refining, cathode, anode, capacity, prices), all checked (249 confirmed, 9 region
+  assignments corrected). The model's 2025 shares miss the observed by 4.3 points on average. The large misses are
+  the allies' cells (2% against 12%) and cobalt refining (allies 3% against 15%): 2024's offsets are dropped at once
+  in 2025. Fading them to zero by 2030 cuts the mean miss to 2.9 points, with 2040 unchanged.
+- **2024's offsets fade to zero by 2030** (`KNOBS["wedge_carry"]={2024: 1, 2025: 0.8, 2030: 0}`), not dropped at
+  once in 2025 (Jones, 2026-11-24, on the backcast).
+  - The allies' 2025 cells come out at 7% (12% observed), and 250 GWh-equivalent is recycled in 2025, not none.
+  - Totals now count the offsets while they fade: 1.54 M M$ (STEPS, no policy), not comparable with 0.14.0's 1.43.
+  - Onshoring adds 44 B USD (2.8%); current policy adds 14 B USD and pays 40 B USD of credits.
+  - Lithium mined in 2040: allies 69%, rest of world and DRC 28% (new mines at own cost: 11% and 84%; myopic: 17% and
+    79%).
+  - Cells are still 92% Chinese in 2040.
+
 ## 0.14.0 (2026-11-24)
 
 The battery model's last pieces. Horizon results move again (PRELIMINARY); the lithium model is unchanged (all 12

@@ -7,8 +7,8 @@ operations below the anchor at their own costs (OPERATIONS) in the observed year
 existing operations (their own size, retiring), new capacity at the region's cost, and the rising curve (0.12.1); every end use, the minerals' other uses and the base
 materials have demand or supply curves; operating and capital costs move on low, mid or high cost curves over time
 (COST_PATHS). 2023 and 2024 are battery.py's observed years: calibrate() sets each curve's offset there so the network
-makes the observed regional shares; after 2024 the offsets are dropped by default (KNOBS["wedge_carry"]) and where
-each stage is made is the model's decision (Jones, 2026-11-23). Costs are discounted (8%). Existing capacity is
+makes the observed regional shares; after 2024 the offsets fade to nothing by 2030 (KNOBS["wedge_carry"]), and from
+then where each stage is made is the model's decision (Jones, 2026-11-23 and 2026-11-24). Costs are discounted (8%). Existing capacity is
 nameplate where known (cells) and retires (mines and refining, KNOBS["retire"]); new capacity is built in any amount,
 serves from its decision year plus its region's lead time for 25 years, and is shared where plants are (anode routes,
 cell chemistries, NMC precursor and cathode, hydromet). Decisions start in 2023, so what came online in 2025 and 2026
@@ -278,8 +278,11 @@ KNOBS = dict(
                        ('mine', 'graphite'): -0.58},
     entry=0.02,                    # every region's curve is also anchored at this share of the world's output, so a
                                    # region that makes nothing today can start (ours)
-    wedge_carry={2024: 1.0, 2025: 0.0},   # share of the calibrated offset kept after 2024 (none: the model's decision,
-                                          # Jones 2026-11-23); 1.0 keeps today's unexplained costs
+    # share of the calibrated offset kept after 2024, straight between and held after: it fades to none by 2030, so
+    # from then where things are made is the model's decision (Jones, 2026-11-23). The fade fits 2025 best (the
+    # backcast, scripts/battery_backcast.py: mean miss 2.9 points against observed 2025 shares, 4.3 when dropped at
+    # once, 3.4 when kept; Jones, 2026-11-24). {2024: 1.0, 2025: 0.0} drops them at once; 1.0 keeps them.
+    wedge_carry={2024: 1.0, 2025: 0.8, 2030: 0.0},
     chem_band=0.10,                # each chemistry's share of an end use within this of IEA's path, by region (ours)
     chem_band_base=0.02,           # in the observed years (room for repurposed packs)
     retire={'mine': 0.04, 'refine': 0.04},   # share of 2024's capacity retiring each year: 1/25 (plant lives of 25
@@ -294,6 +297,13 @@ KNOBS = dict(
     price_mult={},                 # {(group, region): multiplier or {year: multiplier}} on a curve's price
     yard=True,                     # retired packs and black mass may be held from year to year (yards) before
                                    # reuse or recycling, or never
+    # what holding costs, USD per kWh held a year (0.15.0; without it retired packs piled up for free, 3,200 GWh by
+    # 2040): Argonne's reference warehouse cost, 150 USD per tonne a year (Iloeje et al. 2022, X165; an assumption
+    # of theirs, for spent hybrid batteries, no dollar year; their range 0-600, X166), per kWh of retired packs at
+    # module mass (8.70 kg per kWh, NREL 2015's 115 Wh per kg) and of black mass at cell mass (4.98). Storage limits in
+    # law (X172-X178: a year for waste batteries in the US and China, three in the EU before it counts as
+    # landfill) are not imposed: the cost does the work. None or {}: free.
+    yard_cost={'eol': 0.150 * 8.70, 'shred': 0.150 * 4.98},
     # second life after 2024 (Jones, 2026-11-24: not a hard share, a curve): at most `viable` of retired EV packs can be
     # repurposed (80% of collected packs viable, stakeholder-based, battery_2023_2024/lifecycle.csv row 39; NREL: 80-90%
     # of US packs eligible after 15 years, X137, X138); repurposing costs rise on a supply curve anchored at `anchor` of
@@ -305,10 +315,10 @@ KNOBS = dict(
     # rules of origin: a region exports only what it made (and, for base goods, bought), so a good cannot pass
     # through a low-tariff region to dodge a tariff, 45X's foreign-entity rule or an export control (0.13.0: without
     # it the US bought China's cathode and anode through the DRC). Aggregated regions make re-export an artefact.
-    # From 2025: trade is not observed in 2023-2024 (calibration matches each region's output), and with the rule
-    # there graphite mining calibrates to 3.5%, not 2% (the anode's unobserved natural/synthetic split). True: every
-    # year; False: none.
-    rules_of_origin=2025,
+    # Every year (0.15.0): with it only from 2025, the US bought China's cells and anode through the DRC in 2023-2024
+    # too, so it paid no tariff. With it in the observed years graphite mining calibrates within 4% (CAL_TOL). A year:
+    # from that year on; False: none.
+    rules_of_origin=True,
     # [(stage, region)]: no new capacity there beyond 2024's. Default: the DRC (LLNL's Special region, one country)
     # builds no precursor, cathode, anode or cell plants: it has none and none is announced (pipeline_capex.csv has
     # only its cobalt mining), yet as the one region with no US tariff it would otherwise supply the US from 2030
@@ -477,8 +487,9 @@ PYRO = dict(recovery={'Ni': 0.98, 'Co': 0.98},
             lead=None,                                                              # None: LEAD['refine']
             capacity={'ALLY': 7000.0 / _KG_NMC / 1000.0})                           # GWh-equivalent a year
 CAL_ROUNDS = 8                     # calibrate(): refinement rounds, and the miss allowed, a share of the stage's output
-CAL_TOL = {None: 0.005, ('mine', 'graphite'): 0.02}   # graphite mining misses by up to 1.6%: the split of anode
-                                                      # between natural and synthetic graphite is not observed
+CAL_TOL = {None: 0.005, ('mine', 'graphite'): 0.04}   # graphite mining misses by up to 3.5% with rules of origin in
+                                                      # the observed years: the split of anode between natural and
+                                                      # synthetic graphite is not observed
 
 
 def _ref_prices(net, y):
@@ -853,6 +864,7 @@ def network(inputs, years=None, knobs=None, cal=None, policy=None):
     bkw["pools"] = pools
     if k["yard"]:                                  # yards: retired packs held before reuse or shredding (the
         bkw["stockpile"] = dict(regions="all", stages=["eol", "shred"], hold_share=0.0, initial={}, max={},
+                                hold_unit=dict(k["yard_cost"] or {}),
                                 end_at_least_start=False,   # retired stage), black mass after shredding; open after
                                 from_year=max(B.YEARS) + 1)  # the observed years
     # second life: after the observed years, the viable share of retired EV packs may be repurposed, on a cost curve
@@ -1196,6 +1208,15 @@ def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=
                     if x > 1e-6:
                         key = (s_, a[-3], a[-2], a[-1], y)
                         out["trade"][key] = out["trade"].get(key, 0.0) + x
+    nt = h["net"]                                  # node-level detail for export.write(): what each process made,
+    short_stage = {name: st for st in nt["short_stages"] for (s_, name) in nt["goods"] if s_ == st}
+    out["detail"] = dict(                          # stocks held, every good's price, the network's units
+        prod={(n, y): v.X for (n, y), v in h["prod"].items() if abs(v.X) > 1e-9},
+        stock={k_: getattr(v, "X", v) for k_, v in h["stock"].items() if abs(getattr(v, "X", v)) > 1e-9},
+        price={(g, r, y): c.Pi / w(y) for (g, r, y), c in h["bal_all"].items()} if m.IsMIP == 0 else {},
+        short={(short_stage.get(k_[0], 'use'),) + tuple(k_): v for k_, v in out["short"].items()},
+        units=dict(net["units"]), coproducts={p: dict(c) for p, c in net.get("coproducts", {}).items()},
+        years=list(h["Y"]))
     out["credits"] = sum(c * h["prod"][n, y].X * w(y) for (n, y), c in net.get("credit", {}).items()
                          if (n, y) in h["prod"])
     out["resource_cost"] = out["cost"] - paid + out["credits"]

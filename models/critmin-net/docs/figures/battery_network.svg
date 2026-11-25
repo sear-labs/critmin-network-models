@@ -130,5 +130,5 @@
   <rect x="20" y="520" width="1140" height="64" fill="none" stroke="#e4e3df"/>
   <text class="t" x="32" y="542">Every grey box is on a supply (cost) curve in each region and year: known operations at their own costs, new capacity at the region's cost after its lead time</text>
   <text class="t" x="32" y="560">(US and allies long, China short, rest of world shortest for mines), rising beyond; costs move on low, mid or high paths. Orange boxes are demand curves.</text>
-  <text class="t" x="32" y="578">2023-2024 are observed and calibrated; tariffs (by good, exporter, year) sit on the trade arcs, 45X on US production; a region exports only what it makes (from 2025).</text>
+  <text class="t" x="32" y="578">2023-2024 are observed and calibrated; tariffs (by good, exporter, year) sit on the trade arcs, 45X on US production; a region exports only what it makes.</text>
 </svg>

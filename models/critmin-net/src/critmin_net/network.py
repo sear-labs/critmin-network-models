@@ -212,6 +212,9 @@ STOCKPILE = dict(
     max={},                                       # {(stage, region): ceiling on that stage's stock, every good
                                                   # summed, each year}; none by default
     from_year=None,                               # 0.13.0: no stock held before this year (None: from the first)
+    hold_unit={},                                 # 0.15.0: {stage: cost per unit held a year}, on top of hold_share
+                                                  # (goods whose value is nil, such as retired packs, still cost to
+                                                  # store); none by default
     end_at_least_start=True)                      # no stock drawn in the horizon's last year, and each good ends at
                                                   # least where it started. Otherwise the end reads as a free
                                                   # drawdown, and stock stands in for capacity the last year lacks
@@ -955,6 +958,9 @@ def build(m, params=None, extra_cell_demand=None, tactics=None, yields=None, cob
                           for (to, r, y), v in short.items())
     hold_cost = (quicksum((sp["hold_share"] * embedded(st, g, y) * w(y)) * v for (st, g, r, y), v in stock.items())
                  if stock else 0)
+    if stock and sp["hold_unit"]:                  # a cost per unit held, whatever the good's value
+        hold_cost = hold_cost + quicksum(sp["hold_unit"][st] * w(y) * v for (st, g, r, y), v in stock.items()
+                                         if sp["hold_unit"].get(st))
     obj = quicksum(region_cost.values()) + co_cost + short_cost + hold_cost
     for nodes, y, gamma in quad_cost or ():
         q = quicksum(prod[n, y] for n in nodes if (n, y) in prod)

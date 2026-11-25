@@ -385,7 +385,7 @@ def horizon():
 
 def test_horizon_calibrates_the_observed_years(horizon):
     """calibrate(): every group's output in every region and observed year within 0.5% of its stage's output of the
-    observed share (graphite mining 2%: the anode's natural/synthetic split is not observed), and the full horizon
+    observed share (graphite mining 4%: the anode's natural/synthetic split is not observed), and the full horizon
     reproduces the same regional shares (its totals may move a little: the chemistry band in the observed years)."""
     H, B, inp, cal, res = horizon
     assert cal["miss"] < 1.0
@@ -469,13 +469,12 @@ def _made(r, stage, region, y):
 
 
 def test_horizon_regions_export_only_what_they_make(horizon, horizon_policy):
-    """Rules of origin (from 2025): in every later year no region exports more of a stage's goods than it made, so
-    nothing passes through a low-tariff region (before 0.13.0 the US bought China's cathode through the DRC)."""
+    """Rules of origin (every year): no region exports more of a stage's goods than it made, so nothing passes
+    through a low-tariff region (before 0.13.0 the US bought China's cathode through the DRC; before 0.15.0 its cells
+    and anode in 2023-2024)."""
     H, B, inp, cal, res = horizon
     for r in [res["cost"], *horizon_policy.values()]:
         for y in H.YEARS:
-            if y in B.YEARS:
-                continue
             for s in ('mine', 'refine', 'pcam', 'cath', 'anode', 'cell'):
                 for g in B.REGIONS:
                     assert _flows(r, s, y, exp=g) <= _made(r, s, g, y) + 1e-4 * max(1.0, _made(r, s, g, y))
@@ -532,3 +531,61 @@ def test_horizon_drc_cobalt_quota_and_expansions_hold(horizon, horizon_policy):
             assert (m, rg) in H.EXPANSION
             room = H.EXPANSION[m, rg]["share"] * rr["cap"].get(('mine', m, rg, max(B.YEARS)), 0.0)
             assert v <= room + 1e-6 * max(1.0, room)
+
+
+def test_horizon_export_is_what_cem_impacts_reads(horizon, tmp_path):
+    """export.write(): one folder per run in cem-impacts' critmin-net export format (cem_impacts.adapters.critmin):
+    the files and columns it requires, process names that start with their stage code, one unit per good, no
+    duplicate keys, and amounts that add up to the run's own production and trade. When cem_impacts is installed,
+    its reader accepts the folder and validates it against the Flows contract."""
+    import json
+    import pandas as pd
+    from critmin_net import export as E
+    H, B, inp, cal, res = horizon
+    r = res["cost"]
+    f = E.write(r, tmp_path / "STEPS_cost", scenario="STEPS, no policy")
+    cols = {"production": ["stage", "process", "good", "region", "year", "amount", "unit"],
+            "trade": ["stage", "good", "origin", "destination", "year", "amount", "unit"],
+            "shortfall": ["stage", "good", "region", "year", "amount", "unit"],
+            "stock": ["stage", "good", "region", "year", "amount", "unit"],
+            "price": ["stage", "good", "region", "year", "price", "unit"]}
+    keys = {"production": ["process", "good", "region", "year"], "trade": ["stage", "good", "origin", "destination", "year"],
+            "shortfall": ["stage", "good", "region", "year"], "stock": ["stage", "good", "region", "year"],
+            "price": ["stage", "good", "region", "year"]}
+    meta = json.loads((f / "run.json").read_text(encoding="utf-8"))
+    assert meta["model"] == "critmin-net" and meta["status"] == "optimal" and meta["years"] == list(H.YEARS)
+    t = {n: pd.read_csv(f / f"{n}.csv", keep_default_na=False, na_values=[""]) for n in cols}
+    codes = {'base', 'mine', 'refine', 'pcam', 'anode', 'cath', 'cell', 'use', 'eol', 'scrap', 'shred'}
+    for n, df in t.items():
+        assert list(df.columns) == cols[n]
+        assert not df.duplicated(keys[n]).any()
+        if len(df):
+            assert set(df["stage"]) <= codes
+            assert set(df.get("region", df.get("origin"))) <= set(B.REGIONS)
+    p = t["production"]
+    assert (p["process"].str.split(":").str[0] == p["stage"]).all()
+    units = pd.concat([t[n][["stage", "good", "unit"]] for n in ("production", "trade", "stock")]).drop_duplicates()
+    assert not units.duplicated(["stage", "good"]).any()
+    for y in (2030, 2040):
+        for rg in B.REGIONS:
+            got = p[(p.stage == 'cell') & (p.region == rg) & (p.year == y)].amount.sum()
+            assert got == pytest.approx(r["prod"].get(('cell', 'cell', rg, y), 0.0), abs=1e-6)
+    assert t["trade"].amount.sum() == pytest.approx(sum(v for v in r["trade"].values() if v > 1e-9), rel=1e-9)
+    try:
+        from cem_impacts.adapters import critmin
+    except ImportError:
+        return
+    fl = critmin.read_export(f)
+    assert fl.network == "battery" and len(fl.production) == len(p)
+
+
+def test_horizon_yards_cost_to_hold(horizon):
+    """KNOBS yard_cost (0.15.0): holding retired packs and black mass costs Argonne's 150 USD per tonne a year, so
+    yards buffer rather than hoard. With it, little is left in them by 2040; free, thousands of GWh pile up."""
+    H, B, inp, cal, res = horizon
+    held = lambda r, y: sum(v for k, v in r["detail"]["stock"].items() if k[3] == y)
+    assert H.KNOBS["yard_cost"]['eol'] == pytest.approx(0.150 * 8.70)
+    free = H.run("cost", inputs=inp, cal=cal, knobs={"yard_cost": None})
+    assert held(res["cost"], 2040) < 0.2 * held(free, 2040)
+    assert sum(v for (q, y), v in res["cost"]["recycled"].items() if y == 2040) > \
+        sum(v for (q, y), v in free["recycled"].items() if y == 2040)

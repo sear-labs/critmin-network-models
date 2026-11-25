@@ -144,7 +144,11 @@ From 0.13.0:
   `data/battery_horizon/mining/`).
 - **Recycling:** yards for retired packs and black mass, and second life on a cost curve.
 **[docs/battery-horizon.md](docs/battery-horizon.md)** explains it with a network diagram, examples, the knobs and the
-results; `scripts/battery_horizon_figures.py` draws its figures.
+results; `scripts/battery_horizon_figures.py` draws its figures. From 0.15.0:
+- `critmin_net.export.write()` writes a run as the folder cem-impacts reads (its critmin-net reader and Flows
+  contract), and `scripts/battery_horizon.py` exports every case.
+- `scripts/battery_backcast.py` compares the model's 2025 with observed 2025.
+- `scripts/battery_sensitivity.py` moves one knob at a time.
 
 0.4.0 changed only how the model is written: across Alavi's parameters, the calibration and every hook, it
 builds the same Gurobi model as 0.3.0, by Gurobi's model fingerprint, and reports the same results and

@@ -28,12 +28,12 @@ regional map and calibration are ours, not Alavi's or LLNL's (LLNL-TR-859392 sup
 - **Regions:** China, the US, its allies (EU, UK, Japan, Korea, Canada, Australia...), the rest of the world, and the
   DRC (cobalt). Each box in the diagram is one node per region. Goods trade on every arc between regions except
   end uses and retired products, at a trade cost plus any tariff.
-  - **Rules of origin** (from 2025): a region exports only what it made, so nothing passes through a low-tariff
+  - **Rules of origin** (every year): a region exports only what it made, so nothing passes through a low-tariff
     region.
   - **The DRC** builds no precursor, cathode, anode or cell plants by default (`no_entry`). It has none, and none is
     announced. Without this, as the one region with no US tariff, it became the US's cathode supplier.
 - **Years:** 2023-2040.
-  - 2023-2024 are observed. Their regional shares are reproduced within 0.5% of each stage's output (2% for
+  - 2023-2024 are observed. Their regional shares are reproduced within 0.5% of each stage's output (4% for
     graphite mining, whose natural/synthetic anode split is not observed).
   - Capacity built from 2023 decisions serves after each region's lead time.
 
@@ -61,8 +61,9 @@ How a supply curve is built:
 The calibration sets each curve's **offset** in 2023-2024 so the network makes the observed shares. An offset is
 a cost the sourced data leave unexplained: policy, contracts, logistics, or plants run at a loss in a price
 slump. Australian lithium's 2024 offset is +20 USD per kg: at its operations' costs it would have mined far more
-than it did. After 2024 the offsets are dropped by default (`wedge_carry`), so where things get made is the
-model's decision.
+than it did. After 2024 the offsets fade to nothing by 2030 (`wedge_carry`), so from then where things get made
+is the model's decision. The fade fits observed 2025 better than dropping the offsets at once (see the backcast
+below).
 
 ### Building and lead times
 
@@ -166,29 +167,29 @@ Nothing is unmet in any case.
 | policy | 92% | 3% | 4% | 1% |
 | policy + China controls | 92% | 3% | 4% | 1% |
 | no policy + onshore | 76% | 11% | 13% | 1% |
-| policy + onshore | 76% | 11% | 13% | 1% |
+| policy + onshore | 76% | 11% | 12% | 1% |
 
-- **45X moves cells early, then fades.** With policy, the US makes 11% of the world's cells in 2025, 6.5% in 2030
+- **45X moves cells early, then fades.** With policy, the US makes 12% of the world's cells in 2025, 6% in 2030
   and 5% in 2033, as the credit phases out.
 - **Policy changes who supplies the US, not where cells are made.** With tariffs, the US buys cathode, anode and
   cells from its allies and the rest of the world instead of China. China's export controls stop its remaining
   sales to the US. The foreign-entity rule adds little beyond the tariffs: it cuts China's anode to the US by up to a quarter in
   2030-2032, while the credit is paid.
 - **Onshoring floors bind.** The US and allies make 24% of cells, cathode, anode and refined lithium in 2040.
-- **China keeps refining.** Refined lithium is 87% Chinese in 2040 without floors and 68% with them.
-- **Recycling** reaches about 1,040 GWh-equivalent of hydromet+ feed in 2040. That is lower than 0.12.1's 1,650,
-  since second life became a curve and the yards were added. Which of the two accounts for the drop is not yet
-  separated.
+- **China keeps refining.** Refined lithium is 87% Chinese in 2040 without floors and 71% with them.
+- **Recycling** reaches about 1,380 GWh-equivalent of hydromet+ feed in 2040, and 250 in 2025. The yards buffer
+  rather than hoard: holding costs Argonne's 150 USD per tonne a year (`yard_cost`), so about 170 GWh of retired packs
+  sit in them in 2040. Free, 3,200 GWh piled up and 2040 recycling fell to 1,035.
 - **Pyromet+ is never chosen,** not even Umicore's existing plant. Hydromet+ also recovers the lithium and manganese
   that pyromet+ loses to slag. It is there for scenarios, such as limits on hydromet+ or a low lithium price.
 
 ![Resource cost by case](figures/cost_by_case.png)
 
-- **Onshoring** adds about 44 B USD (3.1%) to the discounted 2023-2040 cost, or 62 B USD with current policy as
+- **Onshoring** adds about 44 B USD (2.8%) to the discounted 2023-2040 cost, or 67 B USD with current policy as
   well.
-- **Current policy alone** adds 2 B USD and pays 42 B USD of credits.
-- **China's controls** add less resource cost than the policy case. Resource cost leaves out the tariffs, and the
-  controls replace tariffed imports.
+- **Current policy alone** adds 14 B USD and pays 40 B USD of credits. China's export controls add under 1 B USD
+  more.
+- Totals include 2024's offsets while they fade (to 2030), so they are not comparable with 0.14.0's.
 
 ### The sensitive result: where lithium is mined
 
@@ -196,10 +197,10 @@ Nothing is unmet in any case.
 
 | Lithium mined, 2040 | China | US | Allies | Rest of world + DRC |
 |---|---|---|---|---|
-| no policy | 3% | 1% | 70% | 27% |
-| no policy, new mines at own cost | 3% | 1% | 15% | 81% |
-| no policy, myopic | 3% | 0% | 23% | 74% |
-| no policy, 2024's offsets kept | 63% | 5% | 12% | 20% |
+| no policy | 3% | 1% | 69% | 28% |
+| no policy, new mines at own cost | 3% | 1% | 11% | 84% |
+| no policy, myopic | 3% | 0% | 17% | 79% |
+| no policy, 2024's offsets kept | 64% | 5% | 12% | 19% |
 
 - **With the mining data, the allies (Australia) take the growth.** New mines there cost little to run (14.5 USD
   per kg), little to build (IEA's 28 per kg a year) and pay a low royalty (2.41). New rest-of-world supply costs
@@ -214,6 +215,21 @@ Nothing is unmet in any case.
   Australian mine is cheaper per unit.
 - Refining, cathode, cells and the cost of onshoring barely move between these cases. The offsets-kept case counts
   the offsets as costs, so its total is not comparable with the others.
+
+### Does it reproduce 2025?
+
+Calibrated on 2023-2024, the model's 2025 is compared with what was observed (`scripts/battery_backcast.py`; 258
+checked rows in `data/battery_horizon/backcast/`, one source per stage: USGS for mining, IEA for cells, refining,
+cathode and anode). 2025 demand is an input, so the test is where things were made.
+
+- With the offsets fading to 2030, the regional shares miss by 2.9 percentage points on average, and by 12.6 at
+  most (China's share of nickel-based cathode: 54% against 67%).
+- Dropping the offsets at once in 2025 missed by 4.3 on average and 18.9 at most (cobalt refining). The allies'
+  cells fell to 2% against 12% observed; with the fade they are 7%. Keeping the offsets forever missed by 3.4.
+- Close: graphite mining, refined lithium (China 75% against 74%), LFP cathode, anode, China's cells (80% against
+  82%).
+- Furthest: nickel mining (allies 24% against 15%), cobalt from nickel mines (rest of world 15% against 22%), the
+  US's cells (12% against 6%: 45X).
 
 ## What is still weak
 

@@ -1,5 +1,6 @@
 """Run the battery horizon (critmin_net.horizon) and write results/battery_horizon/ (not committed): production,
 capacity, builds, demand served and recycling by stage group, region and year, and a summary of costs and transfers,
+and cem-impacts' export of each case (results/battery_horizon/export/<demand>_<case>/, critmin_net.export),
 for each case: no policy after 2024 or current policy (tariffs, 45X), each with and without the onshoring floors,
 and current policy with China's export controls on the US from 2027, under stated (STEPS) and current (CPS) policies
 demand, with perfect foresight; and, for STEPS, the cost case myopic (five years in view), with today's unexplained
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from critmin_net import export as E
 from critmin_net import horizon as H
 
 OUT = Path(__file__).resolve().parents[1] / "results" / "battery_horizon"
@@ -38,6 +40,10 @@ def main():
                 continue
             r = H.run(sc, inputs=inp, cal=cal, policy=pol, foresight=fs, knobs=kn)
             assert r["status"] == 2, (demand, name, r["status"])
+            slug = f"{demand}_{name}".replace(" + ", "_").replace(", ", "_").replace(" ", "-")
+            E.write(r, OUT / "export" / slug, scenario=f"{demand}, {name}",
+                    meta=dict(demand=demand, case=name, scenario_kind=sc, policy=pol is not None, foresight=fs,
+                              knobs=sorted(kn) if kn else [], preliminary=True))
             tag = dict(demand=demand, case=name)
             for (s, k, rg, y), v in r["prod"].items():
                 prod.append(dict(tag, stage=s, key=k, region=rg, year=y, output=v, capacity=r["cap"][s, k, rg, y]))
