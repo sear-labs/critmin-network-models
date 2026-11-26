@@ -1,3 +1,0 @@
-# Only 4 of 12 notebooks read from a fixed path this config could drive
-# (the other 8 still hardcode a missing "New input files" folder -- see README).
-data_dir: data/raw/input_files

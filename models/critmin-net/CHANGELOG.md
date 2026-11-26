@@ -3,7 +3,12 @@
 Versions follow SemVer. A change that moves `tests/baseline/` numbers on purpose is at least a minor
 version and says why here.
 
-## 0.17.0 (2026-11-25)
+## 0.17.0 (2026-11-26)
+
+- **Repository:** the prototype's folders (`models/six-stage-mineralnet/`, `archive/lithiumsc-experiments/`) are
+  removed; Sara Alavi's own model is in her repository. Credit is one factual line wherever the model's origin appears:
+  built on Erick C. Jones Jr.'s formulation, from an early six-stage lithium prototype by Sara Alavi, since rebuilt.
+  `pyproject.toml` lists the author of this code.
 
 - **`horizon.build(m, ...)`** adds the horizon to a model another model can share (an energy model, in a joint
   solve): returns (objective, handles, info). On top of the horizon's own options it takes `extra_demand` (another

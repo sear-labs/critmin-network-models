@@ -7,8 +7,9 @@ optionally, current policy: US tariffs, the 45X credit and its foreign-entity ru
 the DRC's cobalt export quota. **Every number here is PRELIMINARY.** The figures are made by
 `scripts/battery_horizon_figures.py` from the results that `scripts/battery_horizon.py` writes.
 
-Credit: the network descends from Sara Alavi's mineral model; the energy-side context is Raziye Aghapour's. The
-regional map and calibration are ours, not Alavi's or LLNL's (LLNL-TR-859392 supplies the regions).
+Credit: critmin-net is built on Erick C. Jones Jr.'s formulation; an early six-stage lithium prototype by Sara Alavi
+(SEAR Lab) was its starting point, and the model has since been rebuilt. The energy-side context is Raziye
+Aghapour's. The regional map and calibration are ours, not LLNL's (LLNL-TR-859392 supplies the regions).
 
 ![The battery network](figures/battery_network.svg)
 

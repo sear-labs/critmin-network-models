@@ -8,7 +8,7 @@ version = "0.17.0"
 description = "The SEAR Lab's critical-minerals supply-chain network model: the lithium-ion battery chain to 2040 on LLNL's regions."
 readme = "README.md"
 license = "MIT"
-authors = [{ name = "Erick C. Jones Jr." }, { name = "Sara Alavi" }]
+authors = [{ name = "Erick C. Jones Jr." }]
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "numpy>=1.26,<3",

@@ -23,6 +23,6 @@ The first three folders were copied on 2026-11-20 from critmin-energy-surrogatec
 **Licence.** The data here are CC BY 4.0 (the code is MIT): cite this repository and, for any number, the source
 its row names.
 
-**Retired with the lithium network (0.16.0).** Alavi's six-stage inputs (`mineralnet-optsc/`, her repo
-`sear-labs/mineralnet-optsc` at `18e67de`), her notebook's reference solution (`reference/`) and the lithium
+**Retired with the lithium network (0.16.0).** The prototype's six-stage inputs (`mineralnet-optsc/`), its reference
+solution (`reference/`) and the lithium
 network's calibration tables were removed on 2026-11-25. They remain in this repository's history (0.15.x).

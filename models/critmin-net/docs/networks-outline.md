@@ -25,7 +25,7 @@ These come up in more than one network, so they belong in the engine, not in eac
 
 | Need | Why | Where it bites |
 |---|---|---|
-| **Build lead time per stage** | The engine has one five-year lead (Alavi's), built into its constraints. Mines, fabs, casting shops and module lines differ widely. | gas turbines (castings, forgings), transformers, mines, everything run over a projection horizon |
+| **Build lead time per stage** | The engine has one five-year lead (the prototype's), built into its constraints. Mines, fabs, casting shops and module lines differ widely. | gas turbines (castings, forgings), transformers, mines, everything run over a projection horizon |
 | **Recipes that change by year** | Material intensity falls over time: thrifting, new designs. Recipes are fixed today. | REE per magnet, silver per PV cell, rhenium per blade, battery chemistries |
 | **Bounds on route shares** | Technology choice within limits (direct-drive vs geared wind, amorphous vs grain-oriented cores, LFP vs NMC). The repurposing cap is a special case; generalise it to a min/max share of a good's output by route. | wind, transformers, batteries, magnets |
 | **Links to the energy model on any good** | Today the link is cells only: `extra_cell_demand` in, the US cell price out. Generalise both: extra demand on any good (GW of turbines, MVA of transformers), and a price and availability by year for any good. | every equipment network; paper 2's coupling |

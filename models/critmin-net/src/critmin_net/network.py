@@ -5,9 +5,9 @@ its years, costs and demand; params name its regions and starting capacity. buil
 capacity and build decision from those, so a new mineral, stage or input is new entries in a network, not new
 constraints. The battery network (battery.py) and its horizon (horizon.py) are built this way.
 
-The engine began as a port of Sara Alavi's six-stage lithium network (SEAR Lab; sear-labs/mineralnet-optsc). That
-network, its inputs and the calibration that moved it to LLNL's regions were retired in 0.16.0 and remain in this
-repository's history (0.15.x).
+critmin-net is built on Erick C. Jones Jr.'s formulation. An early six-stage lithium prototype by Sara Alavi (SEAR
+Lab) was its starting point; the model has since been rebuilt, and the prototype's network, its inputs and the
+calibration that moved it to LLNL's regions were retired in 0.16.0.
 
 Hooks (all off by default):
   * losses             material lost in a process, as a share of what goes in, by stage, process or node
