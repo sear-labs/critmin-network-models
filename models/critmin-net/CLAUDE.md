@@ -17,6 +17,10 @@ The portable standard governs this folder. Read it before working here, and agai
 - **New features are off by default** and leave the baseline unchanged while off.
 - **Sensitivity: public** (Jones, 2026-11-25). The data are ours and cited (CC BY 4.0). Alavi's six-stage inputs
   were taken out of the tree with the lithium network (history keeps them).
+- **Releases are archived on Zenodo** (switched on 2026-11-25; all versions: 10.5281/zenodo.24540500). Each GitHub
+  release makes a deposit from `.zenodo.json`, so release only on purpose. A release's 202 from Zenodo is not a
+  deposit: confirm with an authenticated GET on `/api/deposit/depositions` (state `done`, a DOI), then put the new
+  version's DOI in `CITATION.cff` and the READMEs.
 - **Writers: one machine at a time** for anything that regenerates `tests/baseline/` (Gurobi and BLAS
   versions can move the last digits).
 - **Credit Alavi** for the engine's origin (a port of her six-stage lithium network), and say the regional map is

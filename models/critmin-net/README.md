@@ -1,5 +1,7 @@
 # critmin-net: the SEAR Lab's critical-minerals supply-chain network model
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24540500.svg)](https://doi.org/10.5281/zenodo.24540500)
+
 critmin-net models battery-mineral supply chains as networks: mining, refining, precursor, anode and cathode
 material, cells, end uses, and recycling, in five regions (China, the US, US allies, the rest of the world, the
 DRC) with trade between them. Its main network is the **lithium-ion battery supply chain to 2040**: every market a
@@ -14,7 +16,9 @@ should derive from it: start from a release, and propose what it lacks by pull r
 
 ## How to cite
 
-Cite the release you used (the repository's `CITATION.cff`; GitHub's "Cite this repository" gives the formats):
+Cite the release you used: each has its own DOI on Zenodo, and [10.5281/zenodo.24540500](https://doi.org/10.5281/zenodo.24540500) stands for all versions
+(0.16.1 is [10.5281/zenodo.24540501](https://doi.org/10.5281/zenodo.24540501)). The repository's `CITATION.cff` and GitHub's "Cite this repository" give the
+formats:
 
 ```bibtex
 @software{jones_critmin_network_models,
@@ -22,6 +26,7 @@ Cite the release you used (the repository's `CITATION.cff`; GitHub's "Cite this 
   title   = {critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)},
   version = {0.16.1},
   year    = {2026},
+  doi     = {10.5281/zenodo.24540501},
   url     = {https://github.com/sear-labs/critmin-network-models}
 }
 ```

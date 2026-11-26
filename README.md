@@ -1,5 +1,7 @@
 # critmin-network-models — critical-mineral network models and the RFF trade-exposure analysis
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24540500.svg)](https://doi.org/10.5281/zenodo.24540500)
+
 All network-optimization models for battery-mineral and lithium supply chains, plus the RFF
 (Critical Mineral Lab) trade-exposure analysis. Replaces the earlier repos `mineralnet-optsc`,
 `lithiumsc-experiments` and `critmin-tradeexposure`, whose files now live here.
@@ -10,7 +12,9 @@ how). The other folders are kept as they came, as the record of how it got here.
 
 ## How to cite
 
-Cite the release you used (`CITATION.cff`; GitHub's "Cite this repository" gives the formats):
+Archived on Zenodo. Cite the release you used: every GitHub release has its own DOI, and
+[10.5281/zenodo.24540500](https://doi.org/10.5281/zenodo.24540500) stands for all versions (it resolves to the latest; 0.16.1 is
+[10.5281/zenodo.24540501](https://doi.org/10.5281/zenodo.24540501)). `CITATION.cff` and GitHub's "Cite this repository" give the formats:
 
 ```bibtex
 @software{jones_critmin_network_models,
@@ -18,6 +22,7 @@ Cite the release you used (`CITATION.cff`; GitHub's "Cite this repository" gives
   title   = {critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)},
   version = {0.16.1},
   year    = {2026},
+  doi     = {10.5281/zenodo.24540501},
   url     = {https://github.com/sear-labs/critmin-network-models}
 }
 ```
