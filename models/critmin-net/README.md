@@ -31,8 +31,8 @@ formats:
 }
 ```
 
-**Credits.** The network engine began as a port of Sara Alavi's six-stage lithium network (SEAR Lab); the
-energy-side context is Raziye Aghapour's. LLNL-TR-859392 supplies the
+**Credits.** critmin-net is the SEAR Lab's network model, built on Erick C. Jones Jr.'s formulation. An early six-stage lithium prototype by Sara Alavi (SEAR Lab) was its starting point; the model has since been rebuilt, and the prototype's network was retired in 0.16.0. The energy-side context is Raziye
+Aghapour's. LLNL-TR-859392 supplies the
 regions. The regional calibration, the battery network and everything since are this model's own.
 
 **Licence.** Code: MIT (`LICENSE`). Data (`src/critmin_net/data/`): CC BY 4.0; every number carries its source
@@ -181,11 +181,11 @@ results; `scripts/battery_horizon_figures.py` draws its figures. From 0.15.0:
 
 ## Where it came from
 
-The engine began in `critmin-energy-surrogatecoupling` as a port of Sara Alavi's six-stage lithium network
-(sear-labs/mineralnet-optsc), the mineral half of an energy coupling, and moved here in 0.1.0. That lithium
-network, its inputs and the calibration that moved it to LLNL's regions were retired in 0.16.0: the battery network
-replaced it. They remain in this repository's history (the 0.15.x releases). Alavi's original is beside this
-folder as [`../six-stage-mineralnet/`](../six-stage-mineralnet/).
+critmin-net is the SEAR Lab's network model, built on Erick C. Jones Jr.'s formulation. An early six-stage lithium prototype by Sara Alavi (SEAR Lab) was its starting point; the model has since been rebuilt, and the prototype's network was retired in 0.16.0.
+
+It was first the mineral half of an energy coupling in `critmin-energy-surrogatecoupling` and moved here in 0.1.0. The
+prototype's lithium network, its inputs and the calibration that moved it to LLNL's regions were retired in 0.16.0:
+the battery network replaced it.
 
 ## Running it
 
@@ -262,6 +262,6 @@ the region that holds it and is not re-exported.
 
 ## Credit
 
-The engine began as a port of Sara Alavi's six-stage lithium network (SEAR Lab). The battery network, its
-calibration and its data are this model's own. Cite LLNL-TR-859392 for the
+critmin-net is the SEAR Lab's network model, built on Erick C. Jones Jr.'s formulation. An early six-stage lithium prototype by Sara Alavi (SEAR Lab) was its starting point; the model has since been rebuilt, and the prototype's network was retired in 0.16.0. The battery network, its calibration and its data are
+this model's own. Cite LLNL-TR-859392 for the
 regions, and the sources in `src/critmin_net/data/` (`SOURCES.md`) for every number.
