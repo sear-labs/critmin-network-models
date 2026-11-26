@@ -17,16 +17,16 @@ should derive from it: start from a release, and propose what it lacks by pull r
 ## How to cite
 
 Cite the release you used: each has its own DOI on Zenodo, and [10.5281/zenodo.24540500](https://doi.org/10.5281/zenodo.24540500) stands for all versions
-(0.16.1 is [10.5281/zenodo.24540501](https://doi.org/10.5281/zenodo.24540501)). The repository's `CITATION.cff` and GitHub's "Cite this repository" give the
+(0.17.0 is [10.5281/zenodo.24568643](https://doi.org/10.5281/zenodo.24568643)). The repository's `CITATION.cff` and GitHub's "Cite this repository" give the
 formats:
 
 ```bibtex
 @software{jones_critmin_network_models,
   author  = {Jones, Erick C., Jr.},
   title   = {critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)},
-  version = {0.16.1},
+  version = {0.17.0},
   year    = {2026},
-  doi     = {10.5281/zenodo.24540501},
+  doi     = {10.5281/zenodo.24568643},
   url     = {https://github.com/sear-labs/critmin-network-models}
 }
 ```

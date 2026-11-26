@@ -15,9 +15,9 @@ identifiers:
     value: 10.5281/zenodo.24540500
     description: "All versions (resolves to the latest)"
   - type: doi
-    value: 10.5281/zenodo.24540501
-    description: "Version 0.16.1"
-date-released: 2026-11-25
+    value: 10.5281/zenodo.24568643
+    description: "Version 0.17.0"
+date-released: 2026-11-26
 license: MIT
 # data under models/critmin-net/src/critmin_net/data/: CC BY 4.0
 repository-code: "https://github.com/sear-labs/critmin-network-models"

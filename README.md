@@ -14,16 +14,16 @@ how). It is built on Erick C. Jones Jr.'s formulation. An early six-stage lithiu
 ## How to cite
 
 Archived on Zenodo. Cite the release you used: every GitHub release has its own DOI, and
-[10.5281/zenodo.24540500](https://doi.org/10.5281/zenodo.24540500) stands for all versions (it resolves to the latest; 0.16.1 is
-[10.5281/zenodo.24540501](https://doi.org/10.5281/zenodo.24540501)). `CITATION.cff` and GitHub's "Cite this repository" give the formats:
+[10.5281/zenodo.24540500](https://doi.org/10.5281/zenodo.24540500) stands for all versions (it resolves to the latest; 0.17.0 is
+[10.5281/zenodo.24568643](https://doi.org/10.5281/zenodo.24568643)). `CITATION.cff` and GitHub's "Cite this repository" give the formats:
 
 ```bibtex
 @software{jones_critmin_network_models,
   author  = {Jones, Erick C., Jr.},
   title   = {critmin-network-models: the SEAR Lab's critical-mineral network models (critmin-net)},
-  version = {0.16.1},
+  version = {0.17.0},
   year    = {2026},
-  doi     = {10.5281/zenodo.24540501},
+  doi     = {10.5281/zenodo.24568643},
   url     = {https://github.com/sear-labs/critmin-network-models}
 }
 ```
