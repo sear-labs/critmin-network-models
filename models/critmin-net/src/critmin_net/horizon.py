@@ -1137,6 +1137,60 @@ def onshore_floor(m, h, inputs, floor=None, penalty=None):
     return out, pen
 
 
+def build(m, scenario="cost", inputs=None, cal=None, years=None, floor=None, knobs=None, policy=None,
+          extra_demand=None, limits=None, cap_max=None, tariffs=None):
+    """Add the horizon to gurobipy model m, so another model (an energy model) can share the solve. Returns (objective,
+    handles, info): network.build()'s handles, and info = dict(net, params, bkw, need, audit, floors), floors the
+    onshoring floors' constraints. run() solves one of these; call it the same way.
+
+    inputs, cal: load()'s and calibrate()'s results (required here: calibrate() solves a model of its own). years: the
+    years to build (all of YEARS by default). scenario, floor, knobs, policy: as run(). On top of the horizon's own:
+      extra_demand  {(good, region, year): units}, numbers or linear expressions in m (another model's purchases);
+                    added to network.build()'s extra_demand
+      limits        {(stage, region): {year: ceiling}} on output; the lower of this and the horizon's own ceiling
+      cap_max       {node: ceiling or {year: ceiling}} on capacity; replaces the horizon's for a node it names
+      tariffs       {(stage, exporter, importer) or (stage, good, exporter, importer): {year: rate}}; the higher of
+                    this and policy's rate, year by year
+    """
+    if scenario not in ("cost", "onshore"):
+        raise ValueError(f"scenario: 'cost' or 'onshore', got {scenario!r}")
+    if inputs is None or cal is None:
+        raise ValueError("build: inputs (load()) and cal (calibrate()) are required")
+    years = list(years or YEARS)
+    k = KNOBS | (knobs or {})
+    net, params, bkw, need, info = network(inputs, years=years, knobs=knobs, cal=cal, policy=policy)
+    if extra_demand:
+        xd = dict(bkw.get("extra_demand") or {})
+        for key, v in extra_demand.items():
+            xd[key] = xd[key] + v if key in xd else v
+        bkw["extra_demand"] = xd
+    if limits:
+        lim = {key: dict(v) for key, v in (bkw.get("limits") or {}).items()}
+        for key, by in limits.items():
+            cur = lim.setdefault(key, {})
+            for y, v in by.items():
+                if y in years:
+                    cur[y] = min(cur[y], v) if y in cur else v
+        bkw["limits"] = lim
+    if cap_max:
+        params = dict(params, cap_max={**params.get("cap_max", {}), **cap_max})
+    if tariffs:
+        tf = {key: dict(v) for key, v in (bkw.get("tariffs") or {}).items()}
+        for key, by in tariffs.items():
+            cur = tf.setdefault(key, {y: 0.0 for y in years})   # a new arc: no tariff in the years not given
+            for y, v in by.items():
+                cur[y] = max(cur.get(y, 0.0), v)
+        bkw["tariffs"] = tf
+    report = audit(net, bkw, years, strict=k.get("strict", True))
+    obj, h = N.build(m, params, net=net, **bkw)
+    fl, fpen = (onshore_floor(m, h, inputs, floor, k["floor_penalty"]) if scenario == "onshore" else ({}, 0.0))
+    if policy and policy.get("feoc"):
+        feoc_constraints(m, h, net, policy.get("law", "PL 119-21"))
+    if policy is not None and policy.get("drc_quota", True):
+        drc_cobalt_quota(m, h, policy.get("drc_quota_kt"))
+    return obj + fpen, h, dict(net=net, params=params, bkw=bkw, need=need, audit=report, floors=fl)
+
+
 def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=None, knobs=None, policy=None,
         foresight=None):
     """Solve the horizon and summarise. scenario: "cost" or "onshore"; demand: "STEPS" or "CPS"; policy: policy()
@@ -1153,21 +1207,13 @@ def run(scenario="cost", demand="STEPS", env=None, inputs=None, cal=None, floor=
     fixed = {}
     for t in steps:
         years = YEARS if t is None else [y for y in YEARS if y <= min(max(YEARS), t + foresight - 1)]
-        net, params, bkw, need, info = network(inputs, years=years, knobs=knobs, cal=cal, policy=policy)
-        report = audit(net, bkw, years, strict=(KNOBS | (knobs or {})).get("strict", True))
         import gurobipy as gp
         m = gp.Model(env=env); m.Params.OutputFlag = 0
-        obj, h = N.build(m, params, net=net, **bkw)
+        obj, h, bi = build(m, scenario, inputs=inputs, cal=cal, years=years, floor=floor, knobs=knobs, policy=policy)
+        net, bkw, need, report, fl = bi["net"], bi["bkw"], bi["need"], bi["audit"], bi["floors"]
         for (n, y), v in fixed.items():
             if (n, y) in h["newc"]:
                 h["newc"][n, y].lb = h["newc"][n, y].ub = v
-        fl, fpen = (onshore_floor(m, h, inputs, floor, (KNOBS | (knobs or {}))["floor_penalty"])
-                    if scenario == "onshore" else ({}, 0.0))
-        obj = obj + fpen
-        if policy and policy.get("feoc"):
-            feoc_constraints(m, h, net, policy.get("law", "PL 119-21"))
-        if policy is not None and policy.get("drc_quota", True):
-            drc_cobalt_quota(m, h, policy.get("drc_quota_kt"))
         m.Params.Method = 1
         m.setObjective(obj, GRB.MINIMIZE); m.optimize()
         if m.Status != GRB.OPTIMAL:

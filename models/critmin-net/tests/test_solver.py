@@ -528,3 +528,40 @@ def test_battery_numbers_unchanged(battery_default, horizon):
     runs = horizon[-1]
     assert r["obj"] == pytest.approx(BASE["battery_run_objective"], rel=1e-6)
     assert runs["cost"]["obj"] == pytest.approx(BASE["horizon_cost_steps_objective"], rel=1e-6)
+
+
+def test_horizon_build_embeds_in_another_model(horizon):
+    """horizon.build() adds the horizon to a model another model can share (0.17.0): built alone it solves to run()'s
+    objective, and one more GWh of US LFP cells a year over 2031-2035 (extra_demand) costs what the cell balances'
+    duals say, to first order."""
+    H, _, inp, cal, runs = horizon
+    years = range(2031, 2036)
+    out = {}
+    for extra in (0.0, 1.0):
+        m = gp.Model(); m.Params.OutputFlag = 0; m.Params.Method = 1
+        xd = {(('cell', 'GWh_lfp'), 'US', y): extra for y in years} if extra else None
+        obj, h, info = H.build(m, inputs=inp, cal=cal, extra_demand=xd)
+        m.setObjective(obj, gp.GRB.MINIMIZE); m.optimize()
+        assert m.Status == gp.GRB.OPTIMAL
+        out[extra] = (m.ObjVal, {y: h["bal_all"][('cell', 'GWh_lfp'), 'US', y].Pi for y in years})
+    assert out[0.0][0] == pytest.approx(runs["cost"]["obj"], rel=1e-6)
+    by_duals = sum(out[0.0][1].values())                  # duals are already weighted (discounted) as the objective
+    assert out[1.0][0] - out[0.0][0] == pytest.approx(by_duals, rel=0.05)
+    assert by_duals > 0
+
+
+def test_horizon_build_merges_its_options(horizon):
+    """limits take the lower ceiling, tariffs the higher rate, cap_max replaces a node's ceiling. No solve."""
+    H, _, inp, cal, _ = horizon
+    m = gp.Model(); m.Params.OutputFlag = 0
+    _, _, base = H.build(m, inputs=inp, cal=cal, policy={})
+    key = next(iter(base["bkw"]["tariffs"]))
+    y = 2030
+    m = gp.Model(); m.Params.OutputFlag = 0
+    _, _, info = H.build(m, inputs=inp, cal=cal, policy={}, limits={('refine', 'CHN'): {2031: 5.0}},
+                         tariffs={key: {y: 100.0}}, cap_max={('refine', 'Li', 'Li', 'CHN'): 1.0})
+    assert info["bkw"]["limits"][('refine', 'CHN')][2031] == 5.0
+    assert info["bkw"]["tariffs"][key][y] == 100.0
+    assert info["params"]["cap_max"][('refine', 'Li', 'Li', 'CHN')] == 1.0
+    with pytest.raises(ValueError):
+        H.build(gp.Model(), inputs=inp)
